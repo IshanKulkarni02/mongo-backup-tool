@@ -8,10 +8,10 @@ and git-like **snapshots** — content-addressed, deduped, diffable,
 tag-able history — for lightweight, frequent checkpoints you can roll back to
 in seconds.
 
-It runs as a plain CLI today; an interactive terminal UI and a native
-Mac/Windows/Linux desktop app are on the roadmap (see [Roadmap](#roadmap)).
-All interfaces share the same core, so nothing behaves differently between
-them.
+It has two interfaces today — a scriptable CLI and an interactive,
+arrow-key-driven terminal UI — and a native Mac/Windows/Linux desktop app is
+on the roadmap (see [Roadmap](#roadmap)). All interfaces share the same
+core, so nothing behaves differently between them.
 
 ## Table of contents
 
@@ -19,6 +19,7 @@ them.
 - [Install](#install)
 - [Prerequisites: MongoDB Database Tools](#prerequisites-mongodb-database-tools)
 - [Getting started](#getting-started)
+- [Interactive mode (TUI)](#interactive-mode-tui)
 - [In-tool guide](#in-tool-guide)
 - [Connections](#connections)
 - [Classic backups](#classic-backups)
@@ -90,6 +91,13 @@ export MONGOBAK_MONGODUMP_PATH=/path/to/mongodump
 export MONGOBAK_MONGORESTORE_PATH=/path/to/mongorestore
 ```
 
+Or let mongobak install them for you (macOS via Homebrew, Windows via
+winget — always asks for confirmation first, never runs silently):
+
+```bash
+mongobak doctor install
+```
+
 ## Getting started
 
 A five-minute tour, assuming you have a MongoDB instance running locally on
@@ -118,6 +126,23 @@ mongobak list
 
 That's the whole loop. Everything else in this README is detail on top of
 those six commands.
+
+## Interactive mode (TUI)
+
+Everything above works as flags for scripting/automation, but you don't have
+to memorize any of it. Run mongobak with no arguments for a full-screen,
+arrow-key-driven interface over the same core:
+
+```bash
+mongobak
+```
+
+It walks you through: pick or add a connection → pick or type a database →
+an action menu (snapshot create/history/diff/restore, backup create/list/restore)
+→ live progress → a result screen. Destructive actions (restoring in place)
+always show an explicit confirm screen first, and — same as the CLI — an
+in-place snapshot restore automatically takes a safety snapshot before
+touching anything.
 
 ## In-tool guide
 
@@ -398,8 +423,10 @@ mongobak snapshot tag <id> <tag> --connection <name> --db <db>
 mongobak snapshot gc --connection <name> --db <db> [--keep-last <n>]
 
 mongobak doctor                                 Check mongodump/mongorestore are installed
+mongobak doctor install [--yes]                 Automatically install missing dependencies
 mongobak guide [topic]                          Show the in-tool usage guide
 mongobak version                                Print mongobak's version
+mongobak                                        Launch the interactive terminal UI
 ```
 
 Every command supports `-h`/`--help` for its full flag list.
@@ -419,11 +446,11 @@ The codebase is organized as:
 - `internal/mongotools/` — mongodump/mongorestore wrappers, connection testing
 - `internal/store/` — classic backup index
 - `internal/snapshot/` — the version-control engine (storage backends, diff, restore, gc)
+- `internal/depmanager/` — dependency detection and manual/automatic install
+- `internal/tui/` — the interactive terminal UI (Bubble Tea)
 
 ## Roadmap
 
-- Interactive terminal UI (arrow-key navigation, no need to memorize flags)
 - Native desktop app for macOS (`.dmg`) and Windows (`.exe`), also usable on Linux
 - Remote sync: push/pull snapshot history to a Git/GitHub remote (via Git LFS)
-- Smart dependency manager: one-click automatic install of missing tools
 - Scheduling built into the tool itself (no external cron needed)

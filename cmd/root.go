@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/IshanKulkarni02/mongo-backup-tool/internal/tui"
 )
 
 var version = "dev"
@@ -23,8 +25,13 @@ Typical workflow:
   mongobak backup --connection mydb --db myapp
   mongobak list
 
-Run "mongobak guide" for a full in-terminal usage walkthrough.`,
+Run "mongobak guide" for a full in-terminal usage walkthrough, or just run
+"mongobak" with no arguments for an interactive, arrow-key driven UI.`,
 	SilenceUsage: true,
+	Args:         cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tui.Run()
+	},
 }
 
 // Execute runs the root command; it's the sole entry point called from main().
