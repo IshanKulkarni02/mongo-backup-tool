@@ -7,11 +7,11 @@ Windows. One Go core, three interfaces, no divergence.
 
 ## Status
 
-The CLI foundation is built and tested end-to-end against a real MongoDB
-instance: connection management, full-fidelity backup/restore via the
-official MongoDB Database Tools. Snapshot-based version control, the
-interactive TUI, and the desktop app are in progress — see the plan for the
-full feature roadmap.
+Built and tested end-to-end against real MongoDB instances:
+- **Connections & classic backups**: full-fidelity `mongodump`/`mongorestore`-based backup/restore.
+- **Git-like version control**: content-addressed snapshots with history, diff, tag, restore, and gc. Verified at 1M-document scale (see `internal/snapshot`).
+
+The interactive TUI, remote Git/GitHub sync, and the desktop app are in progress — see the plan for the full feature roadmap.
 
 ## Install
 
@@ -70,6 +70,45 @@ mongobak restore --backup <id> --connection local --target-db myapp_staging --dr
 # Delete a local backup archive
 mongobak delete <id>
 ```
+
+### Version control (snapshots)
+
+Unlike a classic backup, a snapshot is content-addressed: unchanged documents
+are deduped across snapshots, so history builds up cheaply, and you can diff
+or roll back to any point.
+
+```bash
+# Take a snapshot ("commit") of a database
+mongobak snapshot create --connection local --db myapp -m "before migration"
+
+# Show snapshot history for a database, newest first
+mongobak snapshot log --connection local --db myapp
+
+# Diff two snapshots, or a snapshot against the live database
+mongobak snapshot diff <id-a> <id-b> --connection local --db myapp
+mongobak snapshot diff <id-a> --connection local --db myapp --live
+
+# Restore a snapshot — in place, into a different database, or one collection.
+# A --drop restore automatically takes a safety snapshot of the target first.
+mongobak snapshot restore --snapshot <id> --connection local --db myapp
+mongobak snapshot restore --snapshot <id> --connection local --db myapp --target-db myapp_staging --drop
+mongobak snapshot restore --snapshot <id> --connection local --db myapp --collection users
+
+# Tag a snapshot (tagged snapshots are always protected from gc)
+mongobak snapshot tag <id> v1.0-before-migration --connection local --db myapp
+
+# Prune old untagged snapshots and reclaim unreferenced storage
+mongobak snapshot gc --connection local --db myapp --keep-last 10
+```
+
+Each connection+database gets its own snapshot store under the config
+directory (below), using an embedded [bbolt](https://github.com/etcd-io/bbolt)
+database by default — a single file, chosen specifically to avoid the inode
+exhaustion and directory-listing slowdowns a one-file-per-document layout
+would hit at large scale. Snapshot creation uses `readConcern: snapshot` for
+point-in-time consistency when the deployment is a replica set (Atlas
+clusters qualify); against a bare standalone `mongod`, it falls back to a
+plain scan and says so.
 
 Connections and backups are stored per-user under your OS's standard config
 directory (e.g. `~/Library/Application Support/mongobak` on macOS,
