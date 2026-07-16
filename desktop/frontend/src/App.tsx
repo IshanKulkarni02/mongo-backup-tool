@@ -3,6 +3,7 @@ import { Database, GitBranch, Archive, Table2 } from "lucide-react";
 import "./App.css";
 import { ToastProvider, useToast } from "./components/Toast";
 import { useJobUpdates, Job } from "./hooks/useJobs";
+import { DependencyModal } from "./components/DependencyModal";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { SnapshotsView } from "./views/SnapshotsView";
 import { BackupsView } from "./views/BackupsView";
@@ -26,6 +27,7 @@ const JOB_LABELS: Record<string, string> = {
 
 function AppShell() {
   const [view, setView] = useState<View>("connections");
+  const [depsResolved, setDepsResolved] = useState(false);
   const toast = useToast();
 
   const onJobUpdate = useCallback(
@@ -61,6 +63,7 @@ function AppShell() {
         {view === "snapshots" && <SnapshotsView />}
         {view === "backups" && <BackupsView />}
       </main>
+      {!depsResolved && <DependencyModal onResolved={() => setDepsResolved(true)} />}
     </div>
   );
 }

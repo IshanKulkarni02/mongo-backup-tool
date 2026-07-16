@@ -6,6 +6,10 @@ import {store} from '../models';
 
 export function AddConnection(arg1:string,arg2:string):Promise<void>;
 
+export function AutoInstallAvailable():Promise<boolean>;
+
+export function CheckDependencies():Promise<Array<main.DependencyStatus>>;
+
 export function CreateBackup(arg1:string,arg2:string):Promise<string>;
 
 export function CreateCollection(arg1:string,arg2:string,arg3:string):Promise<void>;
@@ -30,6 +34,8 @@ export function GCSnapshots(arg1:string,arg2:string,arg3:number):Promise<snapsho
 
 export function InsertDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
+export function InstallDependencies():Promise<string>;
+
 export function ListBackups():Promise<Array<store.Backup>>;
 
 export function ListCollections(arg1:string,arg2:string):Promise<Array<main.CollectionInfo>>;
@@ -39,6 +45,8 @@ export function ListConnections():Promise<Array<main.ConnectionInfo>>;
 export function ListIndexes(arg1:string,arg2:string,arg3:string):Promise<Array<main.IndexInfo>>;
 
 export function ListSnapshots(arg1:string,arg2:string):Promise<Array<snapshot.Summary>>;
+
+export function ManualInstallInstructions():Promise<Array<string>>;
 
 export function QueryDocuments(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<main.QueryResult>;
 

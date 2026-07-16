@@ -21,11 +21,12 @@ var guideSections = map[string]guideSection{
 	"concepts":        {"Snapshot concepts", printGuideConcepts},
 	"compare":         {"Backups vs. snapshots", printGuideCompare},
 	"remote":          {"Remote sync (Git/GitHub)", printGuideRemote},
+	"scheduler":       {"Scheduler (recurring jobs)", printGuideScheduler},
 	"troubleshooting": {"Troubleshooting", printGuideTroubleshooting},
 }
 
 // guideOrder is the order sections print in when showing the full guide.
-var guideOrder = []string{"quickstart", "connections", "backup", "snapshot", "concepts", "compare", "remote", "troubleshooting"}
+var guideOrder = []string{"quickstart", "connections", "backup", "snapshot", "concepts", "compare", "remote", "scheduler", "troubleshooting"}
 
 var guideCmd = &cobra.Command{
 	Use:   "guide [topic]",
@@ -258,6 +259,28 @@ connection or database name for a remote-synced one.
 Pushing relies entirely on your own Git credentials (SSH key, gh auth
 login, etc.) — mongobak only ever runs git/git-lfs commands, never stores
 or asks for credentials itself.`)
+}
+
+func printGuideScheduler() {
+	fmt.Println(`Run recurring snapshot/backup jobs without needing external cron or Task
+Scheduler. Intervals are plain durations ("1h", "24h", "15m") rather than
+cron syntax.
+
+  mongobak scheduler add --connection local --db myapp \
+      --action snapshot --interval 1h -m "hourly checkpoint"
+  mongobak scheduler add --connection local --action backup --interval 24h
+
+  mongobak scheduler list
+  mongobak scheduler remove <id>
+
+  mongobak scheduler run   # foreground daemon — checks every 30s, fires
+                            # anything due, until you Ctrl+C it
+
+"scheduler run" is meant to be left running — directly, under a process
+supervisor, or as a launchd/systemd service — not invoked per-job the way
+cron entries are. A failed run still advances that schedule's next-run
+time, so a persistently broken job (e.g. an unreachable database) retries
+at its normal interval instead of hammering every 30-second tick.`)
 }
 
 func printGuideTroubleshooting() {

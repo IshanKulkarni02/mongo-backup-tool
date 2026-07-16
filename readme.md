@@ -461,6 +461,11 @@ mongobak remote push --connection <name> --db <db> [--remote origin] [--branch m
 mongobak remote pull --connection <name> --db <db> [--remote origin] [--branch main]
 mongobak remote clone <git-url> --connection <name> --db <db> [--branch main]
 
+mongobak scheduler add --connection <name> --action snapshot|backup --interval <dur> [--db <db>] [-m "message"]
+mongobak scheduler list
+mongobak scheduler remove <id>
+mongobak scheduler run                          Run in the foreground, firing due schedules (Ctrl+C to stop)
+
 mongobak doctor                                 Check mongodump/mongorestore are installed
 mongobak doctor install [--yes]                 Automatically install missing dependencies
 mongobak guide [topic]                          Show the in-tool usage guide
@@ -487,6 +492,7 @@ The codebase is organized as:
 - `internal/snapshot/` — the version-control engine (storage backends, diff, restore, gc)
 - `internal/depmanager/` — dependency detection and manual/automatic install
 - `internal/remote/` — Git/Git-LFS wrapper for remote sync
+- `internal/scheduler/` — recurring snapshot/backup jobs (interval-based, no external cron needed)
 - `internal/tui/` — the interactive terminal UI (Bubble Tea)
 - `desktop/` — the native desktop app (Wails v2 + React/TypeScript), a separate Go module that imports `internal/*` directly
 
@@ -496,11 +502,29 @@ The codebase is organized as:
 cd desktop
 wails dev    # live-reloading dev build
 wails build  # production .app / .exe
+./build/scripts/package-dmg.sh   # macOS only: package the built .app into a .dmg
 ```
 
 See [desktop/README.md](desktop/README.md) for the Wails-generated project notes.
 
+## Distribution
+
+`.github/workflows/release.yml` builds the CLI (macOS/Windows/Linux, all
+architectures) and the desktop app (`.dmg` on macOS, an NSIS installer
+`.exe` on Windows, a binary on Linux) on every `v*` tag push, uploading them
+as workflow artifacts. It deliberately does **not** auto-publish a public
+GitHub Release — that's a separate, explicit step for a maintainer to
+trigger on purpose (`gh release create` with the built artifacts).
+
+None of the built apps/binaries are code-signed or notarized, so first
+launch will trigger an OS warning:
+- **macOS**: right-click the app → Open, to bypass Gatekeeper's
+  unidentified-developer block (only needed once).
+- **Windows**: click "More info" → "Run anyway" on the SmartScreen prompt.
+
+Paid code-signing/notarization is future work, not currently set up.
+
 ## Roadmap
 
-- Windows/Linux installer packaging in CI (`.exe`/NSIS, cross-platform GitHub Actions build)
-- Scheduling built into the tool itself (no external cron needed)
+- Code-signing/notarization for the desktop app
+- Auto-publish releases from CI (opt-in, not yet wired up)

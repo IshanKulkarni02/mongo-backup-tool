@@ -50,6 +50,24 @@ export namespace main {
 	        this.createdAt = source["createdAt"];
 	    }
 	}
+	export class DependencyStatus {
+	    name: string;
+	    description: string;
+	    installed: boolean;
+	    version?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DependencyStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.installed = source["installed"];
+	        this.version = source["version"];
+	    }
+	}
 	export class DiffChangePage {
 	    ids: string[];
 	    total: number;

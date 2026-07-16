@@ -6,6 +6,14 @@ export function AddConnection(arg1, arg2) {
   return window['go']['main']['App']['AddConnection'](arg1, arg2);
 }
 
+export function AutoInstallAvailable() {
+  return window['go']['main']['App']['AutoInstallAvailable']();
+}
+
+export function CheckDependencies() {
+  return window['go']['main']['App']['CheckDependencies']();
+}
+
 export function CreateBackup(arg1, arg2) {
   return window['go']['main']['App']['CreateBackup'](arg1, arg2);
 }
@@ -54,6 +62,10 @@ export function InsertDocument(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['InsertDocument'](arg1, arg2, arg3, arg4);
 }
 
+export function InstallDependencies() {
+  return window['go']['main']['App']['InstallDependencies']();
+}
+
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
@@ -72,6 +84,10 @@ export function ListIndexes(arg1, arg2, arg3) {
 
 export function ListSnapshots(arg1, arg2) {
   return window['go']['main']['App']['ListSnapshots'](arg1, arg2);
+}
+
+export function ManualInstallInstructions() {
+  return window['go']['main']['App']['ManualInstallInstructions']();
 }
 
 export function QueryDocuments(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
