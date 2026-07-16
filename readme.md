@@ -378,6 +378,40 @@ Because `config.json` can contain database credentials, it's written with
 owner-only (`0600`) file permissions, and mongobak always redacts passwords
 in any command output.
 
+## Remote sync (Git/GitHub)
+
+A database's snapshot history can be pushed to a Git remote — GitHub or
+anywhere else — so it's backed up off-machine and shareable. This requires
+[Git](https://git-scm.com) and [Git LFS](https://git-lfs.com) (the actual
+compressed document content is tracked via LFS so it doesn't bloat the repo
+or hit GitHub's file-size limits; only small JSON manifests are tracked as
+regular commits).
+
+```bash
+# One-time setup for a connection+database — must be a brand-new scope
+# (remote sync needs the "fs" storage backend, not the default bbolt one;
+# see "Where your data lives" above)
+mongobak remote init --connection local --db myapp --url git@github.com:you/myapp-snapshots.git
+
+# After taking snapshots as usual, push the history
+mongobak snapshot create --connection local --db myapp -m "checkpoint"
+mongobak remote push --connection local --db myapp
+
+# Elsewhere (or after a fresh install), pull an existing history down
+mongobak remote clone git@github.com:you/myapp-snapshots.git --connection local --db myapp
+
+# Keep in sync going forward
+mongobak remote pull --connection local --db myapp
+```
+
+`remote init` switches a brand-new connection+database scope to the
+file-per-document storage backend and configures Git LFS to track it; it
+can't convert a scope that's already using the default bbolt backend — use
+a fresh connection or database name for a remote-synced one. Pushing relies
+entirely on your own Git credentials (SSH key, `gh auth login`, etc.) —
+mongobak only ever runs `git`/`git-lfs` commands, never stores or asks for
+credentials itself.
+
 ## Troubleshooting
 
 **`mongodump`/`mongorestore` not found**
@@ -422,6 +456,11 @@ mongobak snapshot restore --snapshot <id> --connection <name> --db <db>
 mongobak snapshot tag <id> <tag> --connection <name> --db <db>
 mongobak snapshot gc --connection <name> --db <db> [--keep-last <n>]
 
+mongobak remote init --connection <name> --db <db> [--url <git-url>] [--name origin]
+mongobak remote push --connection <name> --db <db> [--remote origin] [--branch main] [-m "message"]
+mongobak remote pull --connection <name> --db <db> [--remote origin] [--branch main]
+mongobak remote clone <git-url> --connection <name> --db <db> [--branch main]
+
 mongobak doctor                                 Check mongodump/mongorestore are installed
 mongobak doctor install [--yes]                 Automatically install missing dependencies
 mongobak guide [topic]                          Show the in-tool usage guide
@@ -447,10 +486,21 @@ The codebase is organized as:
 - `internal/store/` — classic backup index
 - `internal/snapshot/` — the version-control engine (storage backends, diff, restore, gc)
 - `internal/depmanager/` — dependency detection and manual/automatic install
+- `internal/remote/` — Git/Git-LFS wrapper for remote sync
 - `internal/tui/` — the interactive terminal UI (Bubble Tea)
+- `desktop/` — the native desktop app (Wails v2 + React/TypeScript), a separate Go module that imports `internal/*` directly
+
+### Desktop app
+
+```bash
+cd desktop
+wails dev    # live-reloading dev build
+wails build  # production .app / .exe
+```
+
+See [desktop/README.md](desktop/README.md) for the Wails-generated project notes.
 
 ## Roadmap
 
-- Native desktop app for macOS (`.dmg`) and Windows (`.exe`), also usable on Linux
-- Remote sync: push/pull snapshot history to a Git/GitHub remote (via Git LFS)
+- Windows/Linux installer packaging in CI (`.exe`/NSIS, cross-platform GitHub Actions build)
 - Scheduling built into the tool itself (no external cron needed)

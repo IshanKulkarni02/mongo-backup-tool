@@ -20,11 +20,12 @@ var guideSections = map[string]guideSection{
 	"snapshot":        {"Snapshots (version control)", printGuideSnapshot},
 	"concepts":        {"Snapshot concepts", printGuideConcepts},
 	"compare":         {"Backups vs. snapshots", printGuideCompare},
+	"remote":          {"Remote sync (Git/GitHub)", printGuideRemote},
 	"troubleshooting": {"Troubleshooting", printGuideTroubleshooting},
 }
 
 // guideOrder is the order sections print in when showing the full guide.
-var guideOrder = []string{"quickstart", "connections", "backup", "snapshot", "concepts", "compare", "troubleshooting"}
+var guideOrder = []string{"quickstart", "connections", "backup", "snapshot", "concepts", "compare", "remote", "troubleshooting"}
 
 var guideCmd = &cobra.Command{
 	Use:   "guide [topic]",
@@ -232,6 +233,31 @@ func printGuideCompare() {
 Many workflows use both: a snapshot before every risky operation for
 instant rollback, and a periodic classic backup for off-site, portable
 disaster recovery.`)
+}
+
+func printGuideRemote() {
+	fmt.Println(`A database's snapshot history can be pushed to a Git remote (GitHub or
+anywhere else), backed by Git LFS so the compressed document content
+doesn't bloat the repo or hit file-size limits. Requires git and git-lfs.
+
+  mongobak remote init --connection local --db myapp \
+      --url git@github.com:you/myapp-snapshots.git
+
+  mongobak snapshot create --connection local --db myapp -m "checkpoint"
+  mongobak remote push --connection local --db myapp
+
+  mongobak remote clone git@github.com:you/myapp-snapshots.git \
+      --connection local --db myapp
+  mongobak remote pull --connection local --db myapp
+
+"remote init" only works on a brand-new connection+database scope — remote
+sync needs the file-per-document storage backend, not the default bbolt
+one, and an existing bbolt-backed scope can't be converted. Use a fresh
+connection or database name for a remote-synced one.
+
+Pushing relies entirely on your own Git credentials (SSH key, gh auth
+login, etc.) — mongobak only ever runs git/git-lfs commands, never stores
+or asks for credentials itself.`)
 }
 
 func printGuideTroubleshooting() {

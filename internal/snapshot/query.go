@@ -2,6 +2,13 @@ package snapshot
 
 import "fmt"
 
+// ScopeDir returns the on-disk directory holding a connection+database's
+// snapshot data, creating it if needed. Exposed for the remote-sync CLI,
+// which operates on the directory directly (git init/add/commit/push).
+func ScopeDir(connection, database string) (string, error) {
+	return scopeDir(connection, database)
+}
+
 // Log returns every snapshot for a connection+database, oldest first.
 func Log(connection, database string) ([]Summary, error) {
 	scope, err := scopeDir(connection, database)
