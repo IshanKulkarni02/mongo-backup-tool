@@ -1,0 +1,19 @@
+# Go build artifacts
+/mongobak
+/mongobak.exe
+/dist/
+*.test
+*.out
+
+# Wails desktop app (added in later phases)
+desktop/build/
+desktop/frontend/dist/
+desktop/frontend/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
