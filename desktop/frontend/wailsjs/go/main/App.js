@@ -10,12 +10,24 @@ export function CreateBackup(arg1, arg2) {
   return window['go']['main']['App']['CreateBackup'](arg1, arg2);
 }
 
+export function CreateCollection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateCollection'](arg1, arg2, arg3);
+}
+
+export function CreateIndex(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['CreateIndex'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function CreateSnapshot(arg1, arg2, arg3) {
   return window['go']['main']['App']['CreateSnapshot'](arg1, arg2, arg3);
 }
 
 export function DeleteBackup(arg1) {
   return window['go']['main']['App']['DeleteBackup'](arg1);
+}
+
+export function DeleteDocument(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteDocument'](arg1, arg2, arg3, arg4);
 }
 
 export function DiffCollectionChanges(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
@@ -26,20 +38,44 @@ export function DiffSnapshots(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['DiffSnapshots'](arg1, arg2, arg3, arg4);
 }
 
+export function DropCollection(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DropCollection'](arg1, arg2, arg3);
+}
+
+export function DropIndex(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DropIndex'](arg1, arg2, arg3, arg4);
+}
+
 export function GCSnapshots(arg1, arg2, arg3) {
   return window['go']['main']['App']['GCSnapshots'](arg1, arg2, arg3);
+}
+
+export function InsertDocument(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['InsertDocument'](arg1, arg2, arg3, arg4);
 }
 
 export function ListBackups() {
   return window['go']['main']['App']['ListBackups']();
 }
 
+export function ListCollections(arg1, arg2) {
+  return window['go']['main']['App']['ListCollections'](arg1, arg2);
+}
+
 export function ListConnections() {
   return window['go']['main']['App']['ListConnections']();
 }
 
+export function ListIndexes(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListIndexes'](arg1, arg2, arg3);
+}
+
 export function ListSnapshots(arg1, arg2) {
   return window['go']['main']['App']['ListSnapshots'](arg1, arg2);
+}
+
+export function QueryDocuments(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['QueryDocuments'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
 export function RemoveConnection(arg1) {
@@ -60,4 +96,8 @@ export function TagSnapshot(arg1, arg2, arg3, arg4) {
 
 export function TestConnection(arg1) {
   return window['go']['main']['App']['TestConnection'](arg1);
+}
+
+export function UpdateDocument(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['UpdateDocument'](arg1, arg2, arg3, arg4, arg5);
 }

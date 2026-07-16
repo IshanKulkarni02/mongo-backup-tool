@@ -8,21 +8,39 @@ export function AddConnection(arg1:string,arg2:string):Promise<void>;
 
 export function CreateBackup(arg1:string,arg2:string):Promise<string>;
 
+export function CreateCollection(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function CreateIndex(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
 export function CreateSnapshot(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function DeleteBackup(arg1:string):Promise<void>;
+
+export function DeleteDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function DiffCollectionChanges(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:number,arg8:number):Promise<main.DiffChangePage>;
 
 export function DiffSnapshots(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.DiffSummaryResult>;
 
+export function DropCollection(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function DropIndex(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function GCSnapshots(arg1:string,arg2:string,arg3:number):Promise<snapshot.GCResult>;
+
+export function InsertDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function ListBackups():Promise<Array<store.Backup>>;
 
+export function ListCollections(arg1:string,arg2:string):Promise<Array<main.CollectionInfo>>;
+
 export function ListConnections():Promise<Array<main.ConnectionInfo>>;
 
+export function ListIndexes(arg1:string,arg2:string,arg3:string):Promise<Array<main.IndexInfo>>;
+
 export function ListSnapshots(arg1:string,arg2:string):Promise<Array<snapshot.Summary>>;
+
+export function QueryDocuments(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<main.QueryResult>;
 
 export function RemoveConnection(arg1:string):Promise<void>;
 
@@ -33,3 +51,5 @@ export function RestoreSnapshot(arg1:string,arg2:string,arg3:string):Promise<str
 export function TagSnapshot(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function TestConnection(arg1:string):Promise<Array<string>>;
+
+export function UpdateDocument(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;

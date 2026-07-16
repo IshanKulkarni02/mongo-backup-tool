@@ -1,16 +1,18 @@
 import { useCallback, useState } from "react";
-import { Database, GitBranch, Archive } from "lucide-react";
+import { Database, GitBranch, Archive, Table2 } from "lucide-react";
 import "./App.css";
 import { ToastProvider, useToast } from "./components/Toast";
 import { useJobUpdates, Job } from "./hooks/useJobs";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { SnapshotsView } from "./views/SnapshotsView";
 import { BackupsView } from "./views/BackupsView";
+import { BrowserView } from "./views/BrowserView";
 
-type View = "connections" | "snapshots" | "backups";
+type View = "connections" | "browser" | "snapshots" | "backups";
 
 const NAV: { id: View; label: string; icon: typeof Database }[] = [
   { id: "connections", label: "Connections", icon: Database },
+  { id: "browser", label: "Browser", icon: Table2 },
   { id: "snapshots", label: "Snapshots", icon: GitBranch },
   { id: "backups", label: "Backups", icon: Archive },
 ];
@@ -55,6 +57,7 @@ function AppShell() {
       </nav>
       <main className="main">
         {view === "connections" && <ConnectionsView />}
+        {view === "browser" && <BrowserView />}
         {view === "snapshots" && <SnapshotsView />}
         {view === "backups" && <BackupsView />}
       </main>

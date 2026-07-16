@@ -6,6 +6,7 @@ require (
 	github.com/IshanKulkarni02/mongo-backup-tool v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.13.0
+	go.mongodb.org/mongo-driver/v2 v2.8.0
 )
 
 replace github.com/IshanKulkarni02/mongo-backup-tool => ../
@@ -40,7 +41,6 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect
-	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

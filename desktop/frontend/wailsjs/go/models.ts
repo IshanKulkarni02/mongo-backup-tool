@@ -18,6 +18,22 @@ export namespace main {
 	        this.removedCount = source["removedCount"];
 	    }
 	}
+	export class CollectionInfo {
+	    name: string;
+	    docCount: number;
+	    storageSize: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CollectionInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.docCount = source["docCount"];
+	        this.storageSize = source["storageSize"];
+	    }
+	}
 	export class ConnectionInfo {
 	    name: string;
 	    redactedUri: string;
@@ -83,6 +99,40 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class IndexInfo {
+	    name: string;
+	    keysJson: string;
+	    unique: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.keysJson = source["keysJson"];
+	        this.unique = source["unique"];
+	    }
+	}
+	export class QueryResult {
+	    documents: string[];
+	    total: number;
+	    skip: number;
+	    limit: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new QueryResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.documents = source["documents"];
+	        this.total = source["total"];
+	        this.skip = source["skip"];
+	        this.limit = source["limit"];
+	    }
 	}
 
 }
