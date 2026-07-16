@@ -1,0 +1,166 @@
+.scope-picker {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.scope-picker .input {
+  width: 220px;
+}
+
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.compare-bar .input {
+  width: 220px;
+  height: 32px;
+}
+
+.diff-panel {
+  margin-bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.diff-empty {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.diff-collection {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.diff-collection:last-child {
+  border-bottom: none;
+}
+
+.diff-collection-header {
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.diff-badges {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.diff-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: var(--text-label);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.diff-badge-added {
+  color: var(--color-success);
+}
+.diff-badge-modified {
+  color: var(--color-accent);
+}
+.diff-badge-removed {
+  color: var(--color-danger);
+}
+.diff-badge.active {
+  background: var(--color-bg-subtle);
+}
+
+.diff-ids {
+  margin-top: var(--space-2);
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.diff-id {
+  font-size: var(--text-label);
+}
+
+.diff-more {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.snap-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.snap-id {
+  font-weight: 600;
+}
+
+.snap-meta {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  margin-top: 2px;
+}
+
+.snap-tag {
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
+.snap-message {
+  margin-top: var(--space-1);
+  font-size: var(--text-body);
+}
+
+.snap-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.gc-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.gc-input {
+  width: 60px;
+  height: 28px;
+  text-align: center;
+}
+
+.hint {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  margin: 0;
+}

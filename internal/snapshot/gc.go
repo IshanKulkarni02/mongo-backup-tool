@@ -9,8 +9,8 @@ type GCOptions struct {
 
 // GCResult reports what a GC pass removed.
 type GCResult struct {
-	ManifestsDeleted int
-	ObjectsDeleted   int
+	ManifestsDeleted int `json:"manifestsDeleted"`
+	ObjectsDeleted   int `json:"objectsDeleted"`
 }
 
 // GC prunes untagged snapshots beyond KeepLast, then sweeps the object store

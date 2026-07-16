@@ -1,0 +1,60 @@
+.conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.conn-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.conn-name {
+  font-weight: 600;
+}
+
+.conn-uri {
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.conn-dbs {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.conn-dbs-error {
+  color: var(--color-danger);
+  font-size: var(--text-label);
+}
+
+.conn-db-chip {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-1);
+  font-size: var(--text-label);
+}
+
+.conn-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
