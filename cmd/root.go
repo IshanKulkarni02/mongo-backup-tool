@@ -13,18 +13,17 @@ var version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "mongobak",
-	Short: "Back up and restore MongoDB databases, local or Atlas",
-	Long: `mongobak is a cross-platform CLI for backing up and restoring MongoDB
-databases — local deployments or Atlas clusters — using the official
-mongodump/mongorestore tools under the hood.
+	Short: "Back up, restore, and version-control MongoDB databases, local or Atlas",
+	Long: `mongobak is a cross-platform tool for backing up, restoring, and
+version-controlling MongoDB databases — local deployments or Atlas clusters.
 
 Typical workflow:
   mongobak connection add mydb --uri "mongodb://localhost:27017"
+  mongobak snapshot create --connection mydb --db myapp -m "checkpoint"
   mongobak backup --connection mydb --db myapp
   mongobak list
-  mongobak restore --backup <id> --connection mydb
 
-Run "mongobak ui" for a local web interface instead of the CLI.`,
+Run "mongobak guide" for a full in-terminal usage walkthrough.`,
 	SilenceUsage: true,
 }
 
