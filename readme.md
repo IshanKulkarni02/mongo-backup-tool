@@ -8,10 +8,12 @@ and git-like **snapshots** — content-addressed, deduped, diffable,
 tag-able history — for lightweight, frequent checkpoints you can roll back to
 in seconds.
 
-It has two interfaces today — a scriptable CLI and an interactive,
-arrow-key-driven terminal UI — and a native Mac/Windows/Linux desktop app is
-on the roadmap (see [Roadmap](#roadmap)). All interfaces share the same
-core, so nothing behaves differently between them.
+It ships as three interfaces over the same core, so nothing behaves
+differently between them: a scriptable **CLI**, an interactive
+arrow-key-driven **terminal UI**, and a native Mac/Windows/Linux **desktop
+app** (see [Desktop app](#desktop-app)). None of the desktop app's builds
+are code-signed yet — see [Distribution](#distribution) for what that means
+on first launch.
 
 ## Table of contents
 
@@ -20,6 +22,7 @@ core, so nothing behaves differently between them.
 - [Prerequisites: MongoDB Database Tools](#prerequisites-mongodb-database-tools)
 - [Getting started](#getting-started)
 - [Interactive mode (TUI)](#interactive-mode-tui)
+- [Desktop app](#desktop-app)
 - [In-tool guide](#in-tool-guide)
 - [Connections](#connections)
 - [Classic backups](#classic-backups)
@@ -50,7 +53,9 @@ restoring an entire multi-GB archive. mongobak covers both ends:
 
 ## Install
 
-Requires [Go](https://go.dev) 1.21+.
+Requires [Go](https://go.dev) 1.26+ (matches `go.mod`/CI exactly; Go's
+automatic toolchain management will fetch it for you if your installed
+version is older).
 
 ```bash
 git clone https://github.com/IshanKulkarni02/mongo-backup-tool.git
@@ -143,6 +148,28 @@ an action menu (snapshot create/history/diff/restore, backup create/list/restore
 always show an explicit confirm screen first, and — same as the CLI — an
 in-place snapshot restore automatically takes a safety snapshot before
 touching anything.
+
+## Desktop app
+
+A native Mac/Windows/Linux desktop app (Wails v2 + React/TypeScript) covers
+the same connection/backup/snapshot workflows with a full GUI:
+
+- **Connections** — add, test, and manage saved connections.
+- **Snapshot timeline** — browse history per database, create/tag/restore
+  snapshots, and view diffs (added/modified/removed counts, with paginated
+  drill-down into the actual changed document IDs).
+- **Database browser** — collection tree with live doc counts/sizes, filtered
+  and paginated document viewing/editing, index management.
+- **Classic backups** — create, list, and restore `.archive.gz` backups, with
+  explicit confirmation before any destructive restore.
+- **Job progress** — live progress for long-running operations (snapshot
+  create, restore, backup), with a dependency-manager modal that surfaces
+  missing `mongodump`/`mongorestore` and offers manual or automatic install.
+
+Build and run it locally — see [Desktop app development](#desktop-app-development)
+under [Development](#development). Prebuilt installers are **not
+code-signed**; see [Distribution](#distribution) for what that means on
+first launch.
 
 ## In-tool guide
 
@@ -261,8 +288,12 @@ A snapshot is like a git commit for a database:
 
 Snapshots are stored in an embedded, single-file database (not one file per
 document) specifically so this stays fast and inode-safe even with millions
-of documents — this has been load-tested at 1,000,000 documents (see
-[internal/snapshot](internal/snapshot)).
+of documents. Snapshot creation, diffing, and restore are all
+bounded-memory by design (streamed/chunked, never a full collection or a
+full change list held in RAM) — verified by an opt-in load test at
+1,000,000 documents with a 15%/5%/2% modify/delete/insert mutation between
+two snapshots (`internal/snapshot/loadtest_test.go`; run it yourself with
+`MONGOBAK_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v`).
 
 ### Snapshot command reference
 
@@ -496,7 +527,7 @@ The codebase is organized as:
 - `internal/tui/` — the interactive terminal UI (Bubble Tea)
 - `desktop/` — the native desktop app (Wails v2 + React/TypeScript), a separate Go module that imports `internal/*` directly
 
-### Desktop app
+### Desktop app development
 
 ```bash
 cd desktop

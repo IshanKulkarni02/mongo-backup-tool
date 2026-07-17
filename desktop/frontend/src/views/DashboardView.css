@@ -1,0 +1,72 @@
+.view-header-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.widget-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.widget-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.widget-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.widget-chart {
+  margin-top: var(--space-1);
+}
+
+.dashboard-section-title {
+  font-size: var(--text-h2);
+  margin: var(--space-2) 0;
+}
+
+.saved-query-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.saved-query-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.saved-query-name {
+  font-weight: 600;
+}
+
+.saved-query-sql {
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.y-column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}

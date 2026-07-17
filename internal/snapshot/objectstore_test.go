@@ -140,7 +140,7 @@ func TestBackendDocRefsRoundTrip(t *testing.T) {
 				{ID: "b", Hash: "h-b"},
 				{ID: "c", Hash: "h-c"},
 			}
-			if err := backend.WriteDocRefs("manifest-1", "widgets", refs); err != nil {
+			if err := backend.WriteDocRefs("manifest-1", "widgets", newSliceDocRefIterator(refs)); err != nil {
 				t.Fatalf("WriteDocRefs: %v", err)
 			}
 
@@ -190,7 +190,7 @@ func TestBackendDocRefsSpanMultipleChunks(t *testing.T) {
 				id := fmt.Sprintf("id%06d", i)
 				refs[i] = DocRef{ID: id, Hash: id}
 			}
-			if err := backend.WriteDocRefs("manifest-2", "big", refs); err != nil {
+			if err := backend.WriteDocRefs("manifest-2", "big", newSliceDocRefIterator(refs)); err != nil {
 				t.Fatalf("WriteDocRefs: %v", err)
 			}
 

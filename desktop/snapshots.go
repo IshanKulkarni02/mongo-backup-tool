@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -64,8 +65,21 @@ type DiffSummaryResult struct {
 
 // DiffSnapshots compares two snapshots, or a snapshot against the live
 // database when toID is empty, returning per-collection change counts.
+// Compare never materializes a changed-ID list (diff.go), so this stays
+// bounded in memory even for very large, heavily-changed databases.
 func (a *App) DiffSnapshots(connectionName, database, fromID, toID string) (DiffSummaryResult, error) {
-	diff, err := a.computeDiff(connectionName, database, fromID, toID)
+	from, scope, to, live, err := a.openDiffScope(connectionName, database, fromID, toID)
+	if err != nil {
+		return DiffSummaryResult{}, err
+	}
+	defer scope.Close()
+	toManifest, toSource := to, scope.Source(to.ID)
+	if live != nil {
+		defer live.Close()
+		toManifest, toSource = live.Manifest, live.Source()
+	}
+
+	diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), toManifest, toSource)
 	if err != nil {
 		return DiffSummaryResult{}, err
 	}
@@ -82,68 +96,88 @@ type DiffChangePage struct {
 
 const diffPageMaxLimit = 500
 
-// DiffCollectionChanges returns one page of changed IDs for one collection,
-// recomputing the diff (Compare() completes in ~1s even at 1M documents, so
-// this is simpler and fast enough without adding a server-side diff cache).
+// DiffCollectionChanges returns one page of changed IDs for one collection
+// and change type via DiffCollectionPage, which re-runs just that one
+// collection's merge-join and never materializes the full matched-ID list —
+// memory is bounded by limit (capped at diffPageMaxLimit), not by how many
+// documents changed, unlike computing and slicing a full Diff per page.
 func (a *App) DiffCollectionChanges(connectionName, database, fromID, toID, collection, changeType string, offset, limit int) (DiffChangePage, error) {
+	if offset < 0 {
+		offset = 0
+	}
 	if limit <= 0 || limit > diffPageMaxLimit {
 		limit = diffPageMaxLimit
 	}
-	diff, err := a.computeDiff(connectionName, database, fromID, toID)
-	if err != nil {
-		return DiffChangePage{}, err
-	}
-	cd := diff.Collections[collection]
-	var all []string
+	var ct snapshot.ChangeType
 	switch changeType {
 	case "added":
-		all = cd.Added
+		ct = snapshot.Added
 	case "modified":
-		all = cd.Modified
+		ct = snapshot.Modified
 	case "removed":
-		all = cd.Removed
+		ct = snapshot.Removed
 	default:
 		return DiffChangePage{}, fmt.Errorf("unknown change type %q", changeType)
 	}
-	end := offset + limit
-	if end > len(all) {
-		end = len(all)
-	}
-	if offset > len(all) {
-		offset = len(all)
-	}
-	return DiffChangePage{IDs: all[offset:end], Total: len(all), Offset: offset}, nil
-}
 
-func (a *App) computeDiff(connectionName, database, fromID, toID string) (snapshot.Diff, error) {
-	from, err := snapshot.Get(connectionName, database, fromID)
+	from, scope, to, live, err := a.openDiffScope(connectionName, database, fromID, toID)
 	if err != nil {
-		return snapshot.Diff{}, err
-	}
-
-	scope, err := snapshot.OpenScope(connectionName, database)
-	if err != nil {
-		return snapshot.Diff{}, err
+		return DiffChangePage{}, err
 	}
 	defer scope.Close()
+	toSource := scope.Source(to.ID)
+	if live != nil {
+		defer live.Close()
+		toSource = live.Source()
+	}
+
+	ids, total, err := snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), toSource, collection, ct, offset, limit)
+	if err != nil {
+		return DiffChangePage{}, err
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return DiffChangePage{IDs: ids, Total: total, Offset: offset}, nil
+}
+
+// openDiffScope resolves the "from" snapshot, an open Scope for the
+// connection+database (holding the backend for "from" and, when toID is
+// non-empty, "to" as well), and either the "to" snapshot's manifest or a
+// live scan (when toID is empty) — exactly one of to/live is non-nil.
+// Callers must defer scope.Close() and, when live is non-nil, defer
+// live.Close() too.
+func (a *App) openDiffScope(connectionName, database, fromID, toID string) (from *snapshot.Manifest, scope *snapshot.Scope, to *snapshot.Manifest, live *snapshot.LiveScan, err error) {
+	from, err = snapshot.Get(connectionName, database, fromID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	scope, err = snapshot.OpenScope(connectionName, database)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	if toID == "" {
-		conn, err := a.resolveConn(connectionName)
-		if err != nil {
-			return snapshot.Diff{}, err
+		conn, cerr := a.resolveConn(connectionName)
+		if cerr != nil {
+			scope.Close()
+			return nil, nil, nil, nil, cerr
 		}
-		live, err := snapshot.ScanLive(conn.URI, database)
+		live, err = snapshot.ScanLive(conn.URI, database)
 		if err != nil {
-			return snapshot.Diff{}, err
+			scope.Close()
+			return nil, nil, nil, nil, err
 		}
-		return snapshot.Compare(from, scope.Source(from.ID), live.Manifest, live.Source())
+		return from, scope, nil, live, nil
 	}
 
-	to, err := snapshot.Get(connectionName, database, toID)
+	to, err = snapshot.Get(connectionName, database, toID)
 	if err != nil {
-		return snapshot.Diff{}, err
+		scope.Close()
+		return nil, nil, nil, nil, err
 	}
-	return snapshot.Compare(from, scope.Source(from.ID), to, scope.Source(to.ID))
+	return from, scope, to, nil, nil
 }
 
 func summarizeDiff(diff snapshot.Diff) DiffSummaryResult {
@@ -160,9 +194,9 @@ func summarizeDiff(diff snapshot.Diff) DiffSummaryResult {
 		cd := diff.Collections[name]
 		out.Collections = append(out.Collections, CollectionDiffSummary{
 			Name:          name,
-			AddedCount:    len(cd.Added),
-			ModifiedCount: len(cd.Modified),
-			RemovedCount:  len(cd.Removed),
+			AddedCount:    cd.AddedCount,
+			ModifiedCount: cd.ModifiedCount,
+			RemovedCount:  cd.RemovedCount,
 		})
 	}
 	return out
@@ -176,7 +210,9 @@ func (a *App) RestoreSnapshot(connectionName, database, snapshotID string) (stri
 		return "", err
 	}
 	return a.jobs.run("snapshot-restore", func() (any, error) {
-		result, safety, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
+		// RestoreWithSafety's error message already says whether it
+		// auto-rolled back, so it's returned straight through below.
+		result, safety, _, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
 			SourceConnection: connectionName,
 			SourceDatabase:   database,
 			SnapshotID:       snapshotID,

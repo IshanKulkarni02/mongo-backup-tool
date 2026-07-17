@@ -129,7 +129,12 @@ func (b *fsBackend) docRefsPath(manifestID, collection string) string {
 	return filepath.Join(b.docRefsDir(manifestID), sanitize(collection)+".docrefs.jsonl")
 }
 
-func (b *fsBackend) WriteDocRefs(manifestID, collection string, sorted []DocRef) error {
+// WriteDocRefs streams refs to a temp file one entry at a time (never
+// holding the whole collection in memory) and renames it into place only
+// once every entry is durably written, so a reader never observes a
+// partially-written doc-ref file.
+func (b *fsBackend) WriteDocRefs(manifestID, collection string, refs docRefIterator) error {
+	defer refs.Close()
 	if err := os.MkdirAll(b.docRefsDir(manifestID), 0o755); err != nil {
 		return err
 	}
@@ -141,7 +146,16 @@ func (b *fsBackend) WriteDocRefs(manifestID, collection string, sorted []DocRef)
 	}
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
-	for _, ref := range sorted {
+	for {
+		ref, ok, err := refs.Next()
+		if err != nil {
+			f.Close()
+			os.Remove(tmp)
+			return err
+		}
+		if !ok {
+			break
+		}
 		if err := enc.Encode(ref); err != nil {
 			f.Close()
 			os.Remove(tmp)
