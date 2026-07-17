@@ -23,15 +23,35 @@ type RestoreOptions struct {
 	Drop           bool   // drop each target collection before inserting
 }
 
-// RestoreResult summarizes a completed restore.
+// RestoreResult summarizes a restore. When Restore returns an error,
+// Collections/DocsWritten still reflect exactly how far it got before
+// failing — every collection named in Collections was already
+// dropped-and-reinserted (if Drop was set) and had its indexes recreated;
+// the failure happened on the next one.
+//
+// Touched is a superset of Collections: it also includes a collection that
+// was dropped but then failed before finishing (e.g. insertDocs or
+// recreateIndexes errored right after Drop succeeded) — that collection is
+// destructively damaged (its old content is gone) even though it never
+// made it into Collections. RestoreWithSafety uses Touched, not Collections,
+// to decide whether an automatic rollback is needed — using Collections
+// there would miss damage confined to the very first collection that began
+// dropping before it failed.
 type RestoreResult struct {
 	Database    string
 	Collections []string
+	Touched     []string
 	DocsWritten int
 }
 
 // Restore applies a stored snapshot to a live database via batched
-// InsertMany, then recreates the snapshot's indexes.
+// InsertMany, then recreates the snapshot's indexes, one collection at a
+// time. If a collection fails partway through a multi-collection restore,
+// the returned RestoreResult still lists every collection successfully
+// completed (Collections) and every collection that was at least
+// destructively touched (Touched) before the failure — see
+// RestoreWithSafety, which uses Touched to automatically roll back a
+// destructive restore left half-applied.
 func Restore(opts RestoreOptions) (*RestoreResult, error) {
 	m, err := Get(opts.SourceConnection, opts.SourceDatabase, opts.SnapshotID)
 	if err != nil {
@@ -76,45 +96,64 @@ func Restore(opts RestoreOptions) (*RestoreResult, error) {
 	}
 	sort.Strings(names)
 
-	totalDocs := 0
+	result := &RestoreResult{Database: targetDB}
 	for _, name := range names {
 		cm := m.Collections[name]
 		coll := db.Collection(name)
 
 		if opts.Drop {
+			// Recorded BEFORE Drop runs, not after it succeeds: Drop itself
+			// is the destructive act, so even if Drop's own call somehow
+			// returns an error after partially applying (or anything after
+			// it fails), this collection must be treated as damaged.
+			result.Touched = append(result.Touched, name)
 			if err := coll.Drop(ctx); err != nil {
-				return nil, fmt.Errorf("dropping %s before restore: %w", name, err)
+				return result, fmt.Errorf("dropping %s before restore: %w", name, err)
 			}
 		}
 
 		it, err := backend.IterDocRefs(m.ID, name)
 		if err != nil {
-			return nil, fmt.Errorf("reading doc refs for %s: %w", name, err)
+			return result, fmt.Errorf("reading doc refs for %s: %w", name, err)
 		}
 		written, err := insertDocs(ctx, coll, backend, it)
 		if err != nil {
-			return nil, fmt.Errorf("restoring %s: %w", name, err)
+			return result, fmt.Errorf("restoring %s: %w", name, err)
 		}
-		totalDocs += written
+		result.DocsWritten += written
 
 		if err := recreateIndexes(ctx, coll, cm.Indexes); err != nil {
-			return nil, fmt.Errorf("recreating indexes for %s: %w", name, err)
+			return result, fmt.Errorf("recreating indexes for %s: %w", name, err)
 		}
+
+		result.Collections = append(result.Collections, name)
 	}
 
-	return &RestoreResult{Database: targetDB, Collections: names, DocsWritten: totalDocs}, nil
+	return result, nil
 }
 
 // RestoreWithSafety snapshots the restore target before a destructive
 // (Drop=true) restore, so the prior state is never unrecoverable. A
 // non-destructive restore (Drop=false) only adds/overwrites documents and
 // never deletes data, so no safety snapshot is needed.
-func RestoreWithSafety(opts RestoreOptions, safetyConnectionName string) (result *RestoreResult, safety *CreateResult, err error) {
+//
+// If a destructive, multi-collection restore fails partway through — e.g.
+// collection two of three's index recreation errors, after collection one
+// was already dropped and reinserted — the target is left in a mixed state:
+// part still-original, part already-swapped-to-the-new-snapshot's-content.
+// Rather than leave that for the caller to notice and recover manually,
+// RestoreWithSafety detects it (via Restore's partial RestoreResult) and
+// automatically restores from the safety snapshot to bring every touched
+// collection back to its pre-restore state. rolledBack reports whether that
+// happened; if the rollback attempt itself fails, both errors are reported
+// together and manual recovery from the safety snapshot ID is the fallback.
+func RestoreWithSafety(opts RestoreOptions, safetyConnectionName string) (result *RestoreResult, safety *CreateResult, rolledBack bool, err error) {
+	targetDB := opts.TargetDatabase
+	if targetDB == "" {
+		targetDB = opts.SourceDatabase
+	}
+
 	if opts.Drop {
-		targetDB := opts.TargetDatabase
-		if targetDB == "" {
-			targetDB = opts.SourceDatabase
-		}
 		safety, err = Create(CreateOptions{
 			Connection: safetyConnectionName,
 			URI:        opts.TargetURI,
@@ -122,11 +161,38 @@ func RestoreWithSafety(opts RestoreOptions, safetyConnectionName string) (result
 			Message:    fmt.Sprintf("auto safety snapshot before restoring %s", opts.SnapshotID),
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("taking safety snapshot before restore: %w", err)
+			return nil, nil, false, fmt.Errorf("taking safety snapshot before restore: %w", err)
 		}
 	}
+
 	result, err = Restore(opts)
-	return result, safety, err
+	if err == nil {
+		return result, safety, false, nil
+	}
+
+	// A restore that failed without ever touching a collection (e.g. the
+	// snapshot ID didn't resolve, or the target URI was unreachable) needs
+	// no rollback — nothing changed. Deliberately checked via Touched, not
+	// Collections: a failure right after the very first collection's Drop
+	// (before it ever reaches Collections) still did real, rollback-worthy
+	// damage.
+	partialDamage := opts.Drop && safety != nil && result != nil && len(result.Touched) > 0
+	if !partialDamage {
+		return result, safety, false, err
+	}
+
+	_, rbErr := Restore(RestoreOptions{
+		SourceConnection: safetyConnectionName,
+		SourceDatabase:   targetDB,
+		SnapshotID:       safety.Summary.ID,
+		TargetURI:        opts.TargetURI,
+		TargetDatabase:   targetDB,
+		Drop:             true,
+	})
+	if rbErr != nil {
+		return result, safety, false, fmt.Errorf("restore failed partway through (%d collection(s) applied: %w) — automatic rollback ALSO failed (%v); manually restore safety snapshot %s into %q to recover", len(result.Collections), err, rbErr, safety.Summary.ID, targetDB)
+	}
+	return result, safety, true, fmt.Errorf("restore failed partway through (%d collection(s) applied) and was automatically rolled back to the pre-restore state using safety snapshot %s: %w", len(result.Collections), safety.Summary.ID, err)
 }
 
 // insertDocs streams documents out of it (never materializing the whole
@@ -180,23 +246,82 @@ func insertDocs(ctx context.Context, coll *mongo.Collection, store ObjectStore, 
 	return written, nil
 }
 
+// recreateIndexes restores every index option scanIndexes captured, not
+// just unique/sparse/TTL: hidden, partial-filter, collation, wildcard
+// projection, and the text/geo index options (default language, language
+// override, text version, weights, 2dsphere version, bits/min/max for
+// legacy 2d/geoHaystack indexes). scanIndexes already stores every option
+// MongoDB reports for an index generically (see pipeline.go); this is what
+// actually applies all of it back, rather than silently dropping anything
+// not explicitly named.
 func recreateIndexes(ctx context.Context, coll *mongo.Collection, specs []IndexSpec) error {
 	for _, spec := range specs {
 		if spec.Name == "_id_" {
 			continue // Mongo creates this automatically
 		}
 		idxOpts := options.Index().SetName(spec.Name)
-		if v, ok := spec.Options["unique"].(bool); ok && v {
+		opts := spec.Options
+
+		if v, ok := opts["unique"].(bool); ok && v {
 			idxOpts.SetUnique(true)
 		}
-		if v, ok := spec.Options["sparse"].(bool); ok && v {
+		if v, ok := opts["sparse"].(bool); ok && v {
 			idxOpts.SetSparse(true)
 		}
-		if v, ok := spec.Options["expireAfterSeconds"]; ok {
+		if v, ok := opts["hidden"].(bool); ok && v {
+			idxOpts.SetHidden(true)
+		}
+		if v, ok := opts["expireAfterSeconds"]; ok {
 			if secs, ok := toInt32(v); ok {
 				idxOpts.SetExpireAfterSeconds(secs)
 			}
 		}
+		if v, ok := opts["partialFilterExpression"]; ok {
+			idxOpts.SetPartialFilterExpression(v)
+		}
+		if v, ok := opts["wildcardProjection"]; ok {
+			idxOpts.SetWildcardProjection(v)
+		}
+		if v, ok := opts["default_language"].(string); ok && v != "" {
+			idxOpts.SetDefaultLanguage(v)
+		}
+		if v, ok := opts["language_override"].(string); ok && v != "" {
+			idxOpts.SetLanguageOverride(v)
+		}
+		if v, ok := opts["textIndexVersion"]; ok {
+			if ver, ok := toInt32(v); ok {
+				idxOpts.SetTextVersion(ver)
+			}
+		}
+		if v, ok := opts["weights"]; ok {
+			idxOpts.SetWeights(v)
+		}
+		if v, ok := opts["2dsphereIndexVersion"]; ok {
+			if ver, ok := toInt32(v); ok {
+				idxOpts.SetSphereVersion(ver)
+			}
+		}
+		if v, ok := opts["bits"]; ok {
+			if bits, ok := toInt32(v); ok {
+				idxOpts.SetBits(bits)
+			}
+		}
+		if v, ok := opts["min"]; ok {
+			if f, ok := toFloat64(v); ok {
+				idxOpts.SetMin(f)
+			}
+		}
+		if v, ok := opts["max"]; ok {
+			if f, ok := toFloat64(v); ok {
+				idxOpts.SetMax(f)
+			}
+		}
+		if v, ok := opts["collation"]; ok {
+			if c := toCollation(v); c != nil {
+				idxOpts.SetCollation(c)
+			}
+		}
+
 		model := mongo.IndexModel{Keys: spec.Keys, Options: idxOpts}
 		if _, err := coll.Indexes().CreateOne(ctx, model); err != nil {
 			return fmt.Errorf("index %s: %w", spec.Name, err)
@@ -215,4 +340,62 @@ func toInt32(v interface{}) (int32, bool) {
 		return int32(n), true
 	}
 	return 0, false
+}
+
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// toCollation converts a captured collation sub-document — a bson.M when
+// read directly off a live index, or a map[string]interface{} with
+// float64-typed numbers once round-tripped through the JSON-encoded
+// manifest — into the driver's typed Collation options struct.
+func toCollation(v interface{}) *options.Collation {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		if bm, ok := v.(bson.M); ok {
+			m = map[string]interface{}(bm)
+		} else {
+			return nil
+		}
+	}
+	c := &options.Collation{}
+	if s, ok := m["locale"].(string); ok {
+		c.Locale = s
+	}
+	if b, ok := m["caseLevel"].(bool); ok {
+		c.CaseLevel = b
+	}
+	if s, ok := m["caseFirst"].(string); ok {
+		c.CaseFirst = s
+	}
+	if n, ok := toInt32(m["strength"]); ok {
+		c.Strength = int(n)
+	}
+	if b, ok := m["numericOrdering"].(bool); ok {
+		c.NumericOrdering = b
+	}
+	if s, ok := m["alternate"].(string); ok {
+		c.Alternate = s
+	}
+	if s, ok := m["maxVariable"].(string); ok {
+		c.MaxVariable = s
+	}
+	if b, ok := m["normalization"].(bool); ok {
+		c.Normalization = b
+	}
+	if b, ok := m["backwards"].(bool); ok {
+		c.Backwards = b
+	}
+	return c
 }

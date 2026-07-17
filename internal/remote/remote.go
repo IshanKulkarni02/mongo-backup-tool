@@ -61,7 +61,16 @@ func Init(scope string) error {
 	}
 
 	if !IsInitialized(scope) {
-		if _, err := run(scope, git, "init"); err != nil {
+		// The initial branch name is explicitly pinned to "main" rather than
+		// left to the local git installation's configured default (which
+		// varies — "master" on an unconfigured system, whatever
+		// init.defaultBranch says otherwise). Push/Pull/Clone all default to
+		// "main" too (see cmd/remote.go's --branch flags); if the local
+		// repo's actual first branch ended up named something else, the
+		// very first `mongobak remote push` would fail outright with "src
+		// refspec main does not match any" before any content ever reached
+		// the remote.
+		if _, err := run(scope, git, "init", "-b", "main"); err != nil {
 			return fmt.Errorf("git init: %w", err)
 		}
 	}
@@ -79,6 +88,20 @@ func Init(scope string) error {
 	if existing, err := os.ReadFile(attrPath); err != nil || string(existing) != attrs {
 		if err := os.WriteFile(attrPath, []byte(attrs), 0o644); err != nil {
 			return fmt.Errorf("writing .gitattributes: %w", err)
+		}
+	}
+
+	// identity.json (see internal/snapshot's scopeDir) records which
+	// connection+database *this machine's* copy of the scope belongs to —
+	// it must never be pushed, since cloning the same remote under a
+	// different local connection name (a real, supported case) would
+	// otherwise overwrite the correct local identity with the source
+	// machine's.
+	ignorePath := filepath.Join(scope, ".gitignore")
+	ignoreLine := "identity.json\n"
+	if existing, err := os.ReadFile(ignorePath); err != nil || string(existing) != ignoreLine {
+		if err := os.WriteFile(ignorePath, []byte(ignoreLine), 0o644); err != nil {
+			return fmt.Errorf("writing .gitignore: %w", err)
 		}
 	}
 
@@ -136,17 +159,30 @@ func Pull(scope, remoteName, branch string) error {
 // default to "master" (or have no default at all) even though mongobak
 // always pushes to "main", which would otherwise clone an empty tree.
 //
-// git itself permits cloning into a directory that already exists as long
-// as it's empty — which is exactly what happens here, since ScopeDir always
-// creates the (empty) scope directory as a side effect of looking it up —
-// so this only rejects a scope that already has content in it.
+// git requires the target directory to not exist, or be genuinely empty —
+// no exceptions for gitignored or otherwise-expected files. Every caller
+// resolves scope via snapshot.ScopeDir first, which — as a side effect of
+// merely looking the path up — creates the directory and writes
+// identity.json (recording the connection+database this scope belongs to,
+// so a directory-name collision can never be mistaken for the wrong scope).
+// That one expected file is removed before cloning (it's never part of the
+// pushed history — see Init's .gitignore — so nothing is lost, and a normal
+// subsequent scope lookup re-creates it); anything else in the directory
+// still means "already has content" and is rejected.
 func Clone(url, scope, branch string) error {
 	git, err := findGit()
 	if err != nil {
 		return err
 	}
-	if entries, err := os.ReadDir(scope); err == nil && len(entries) > 0 {
-		return fmt.Errorf("%s already has content in it", scope)
+	if entries, err := os.ReadDir(scope); err == nil {
+		for _, e := range entries {
+			if e.Name() != "identity.json" {
+				return fmt.Errorf("%s already has content in it", scope)
+			}
+		}
+		if err := os.Remove(filepath.Join(scope, "identity.json")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	parent := filepath.Dir(scope)
 	if err := os.MkdirAll(parent, 0o755); err != nil {

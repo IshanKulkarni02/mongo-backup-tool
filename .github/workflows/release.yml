@@ -1,12 +1,15 @@
 name: Release build
 
-# Builds the mongobak CLI (all platforms) and the desktop app (.dmg for
-# macOS, NSIS installer .exe for Windows, binary for Linux) on every
-# version-tag push, and uploads them as workflow artifacts (Actions tab).
+# Gates on `go vet`/`go test ./...` passing, then builds the mongobak CLI
+# (all platforms) and the desktop app (.dmg for macOS, a standalone .exe +
+# NSIS installer for Windows, a binary for Linux) on every version-tag push,
+# and creates a DRAFT GitHub Release with every artifact attached.
 #
-# Deliberately does NOT auto-publish a public GitHub Release — that's a
-# separate, explicit step (`gh release create` with these artifacts, or
-# adding a release job here) left for a maintainer to trigger on purpose.
+# The release is deliberately created as a draft (see the `release` job's
+# `draft: true`) — visible only to repo maintainers, not the public — so
+# tagging never surprises anyone with a live public release. Making it
+# public is a separate, explicit step: open the draft on GitHub and click
+# "Publish release" (or `gh release edit <tag> --draft=false`).
 on:
   push:
     tags:
@@ -14,8 +17,30 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  test:
+    name: Test gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        # mongod-backed integration tests (internal/snapshot, internal/remote)
+        # skip cleanly here — no mongod in this runner — rather than
+        # failing; they're run against a real mongod as part of this
+        # project's normal development workflow. This gate still catches
+        # any unit-test regression before packaging proceeds.
+        run: go test ./...
+
   cli:
     name: CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [test]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -38,7 +63,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.26.5"
 
       - name: Build
         env:
@@ -54,6 +79,7 @@ jobs:
 
   desktop:
     name: Desktop (${{ matrix.os }})
+    needs: [test]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,14 +90,16 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.26.5"
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        # Pinned to match the version desktop/go.mod requires, so CI never
+        # silently drifts to a newer/incompatible Wails CLI release.
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -93,10 +121,20 @@ jobs:
           name: mongobak.dmg
           path: desktop/build/bin/mongobak.dmg
 
-      - name: Build (Windows -> NSIS installer)
+      - name: Build (Windows -> standalone .exe + NSIS installer)
+        # `-nsis` produces BOTH the plain application binary
+        # (mongobak.exe) and the NSIS installer (*installer.exe) in the
+        # same build/bin directory — both are required deliverables per
+        # the product spec, not just the installer.
         if: runner.os == 'Windows'
         working-directory: desktop
         run: wails build -platform windows/amd64 -nsis
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: mongobak-desktop-windows-amd64.exe
+          path: desktop/build/bin/mongobak.exe
 
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
@@ -114,3 +152,27 @@ jobs:
         with:
           name: mongobak-desktop-linux-amd64
           path: desktop/build/bin/mongobak
+
+  release:
+    name: Create draft GitHub Release
+    needs: [cli, desktop]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: true

@@ -3,7 +3,6 @@ package snapshot
 import (
 	"context"
 	"runtime"
-	"sort"
 	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -18,10 +17,17 @@ import (
 // a single writer that batches results into store.PutMany, keeping lock
 // contention on the backend low regardless of worker count. If store is
 // nil (used by ScanLive), content is hashed but never persisted.
-func scanCollectionDocs(ctx context.Context, coll *mongo.Collection, store ObjectStore) ([]DocRef, int, error) {
+//
+// Results are sorted via a bounded external-merge spill (extsort.go) rather
+// than an in-memory slice: memory use stays proportional to one merge-sort
+// run (extSortRunSize entries), not the collection size, so scanning a
+// million-document collection doesn't require holding every one of its
+// DocRefs in RAM at once. The caller owns the returned spill and must
+// eventually call its Cleanup().
+func scanCollectionDocs(ctx context.Context, coll *mongo.Collection, store ObjectStore) (*extSortSpill, int, int, error) {
 	cur, err := coll.Find(ctx, bson.D{})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	defer cur.Close(ctx)
 
@@ -92,9 +98,14 @@ func scanCollectionDocs(ctx context.Context, coll *mongo.Collection, store Objec
 		close(results)
 	}()
 
+	spill, err := newExtSortSpill()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
 	const writeBatchSize = 500
 	batch := make([]EncodedObject, 0, writeBatchSize)
-	var refs []DocRef
+	docCount := 0
 	newObjects := 0
 	var firstErr error
 
@@ -119,7 +130,14 @@ func scanCollectionDocs(ctx context.Context, coll *mongo.Collection, store Objec
 			}
 			continue
 		}
-		refs = append(refs, r.ref)
+		if firstErr != nil {
+			continue // drain remaining results after an error, but stop doing work
+		}
+		if err := spill.Add(r.ref); err != nil {
+			firstErr = err
+			continue
+		}
+		docCount++
 		if store != nil {
 			batch = append(batch, r.obj)
 			if len(batch) >= writeBatchSize {
@@ -133,14 +151,15 @@ func scanCollectionDocs(ctx context.Context, coll *mongo.Collection, store Objec
 		firstErr = err
 	}
 	if firstErr != nil {
-		return nil, 0, firstErr
+		spill.Cleanup()
+		return nil, 0, 0, firstErr
 	}
 	if err := cur.Err(); err != nil {
-		return nil, 0, err
+		spill.Cleanup()
+		return nil, 0, 0, err
 	}
 
-	sort.Slice(refs, func(i, j int) bool { return refs[i].ID < refs[j].ID })
-	return refs, newObjects, nil
+	return spill, docCount, newObjects, nil
 }
 
 func scanIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, error) {
@@ -181,39 +200,60 @@ func scanIndexes(ctx context.Context, coll *mongo.Collection) ([]IndexSpec, erro
 	return specs, cur.Err()
 }
 
-// scanDatabase reads every collection in db. store may be nil (ScanLive: hash
-// but don't persist). It returns each collection's manifest metadata, its
-// full sorted DocRef list (the caller decides whether/how to persist those —
-// Create writes them via Backend.WriteDocRefs once it has a snapshot ID;
-// ScanLive keeps them in memory for an immediate diff), and how many objects
-// were newly written.
-func scanDatabase(ctx context.Context, db *mongo.Database, store ObjectStore) (map[string]CollectionManifest, map[string][]DocRef, int, error) {
-	names, err := db.ListCollectionNames(ctx, bson.D{})
+// scanDatabase reads every collection in db. store may be nil (ScanLive:
+// hash but don't persist object content).
+//
+// catalogCtx is used only for catalog/DDL-style reads (listCollections,
+// listIndexes) and scanCtx only for document reads (coll.Find) — MongoDB
+// does not allow listCollections (and, per the same catalog-vs-data-snapshot
+// restriction, listIndexes) inside a multi-document transaction, so a
+// snapshot's readConcern:snapshot session (beginSnapshotRead) must never be
+// used for those calls. catalogCtx is ordinarily the plain pre-transaction
+// context; scanCtx is the (possibly transactional) context that carries the
+// point-in-time guarantee for document content. This means the collection
+// list and index definitions are captured just before the transactional
+// document scan begins, not atomically with it — an inherent MongoDB
+// limitation (there's no snapshot-consistent way to read the catalog), not
+// a gap in this tool: the guarantee that matters (every collection's
+// document content reflects one consistent instant) still holds.
+//
+// For each collection, once its DocRefs are fully scanned and sorted
+// (bounded memory throughout, see scanCollectionDocs), onCollection is
+// invoked with the collection's spill — the caller decides what to do with
+// it (persist immediately and clean up, for Create; or keep it open as a
+// diff source, for ScanLive) and is responsible for eventually cleaning it
+// up. Only one collection's spill is ever open here at a time —
+// onCollection must finish with it (persist or take ownership) before the
+// next collection starts scanning.
+func scanDatabase(catalogCtx, scanCtx context.Context, db *mongo.Database, store ObjectStore, onCollection func(name string, spill *extSortSpill) error) (map[string]CollectionManifest, int, error) {
+	names, err := db.ListCollectionNames(catalogCtx, bson.D{})
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, 0, err
 	}
 
 	collections := make(map[string]CollectionManifest, len(names))
-	docRefs := make(map[string][]DocRef, len(names))
 	newObjects := 0
 
 	for _, name := range names {
 		coll := db.Collection(name)
 
-		indexSpecs, err := scanIndexes(ctx, coll)
+		indexSpecs, err := scanIndexes(catalogCtx, coll)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, 0, err
 		}
 
-		refs, n, err := scanCollectionDocs(ctx, coll, store)
+		spill, docCount, n, err := scanCollectionDocs(scanCtx, coll, store)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, 0, err
 		}
 		newObjects += n
 
-		collections[name] = CollectionManifest{Indexes: indexSpecs, DocCount: len(refs)}
-		docRefs[name] = refs
+		if err := onCollection(name, spill); err != nil {
+			return nil, 0, err
+		}
+
+		collections[name] = CollectionManifest{Indexes: indexSpecs, DocCount: docCount}
 	}
 
-	return collections, docRefs, newObjects, nil
+	return collections, newObjects, nil
 }

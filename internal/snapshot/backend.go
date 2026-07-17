@@ -27,7 +27,11 @@ const (
 type Backend interface {
 	ObjectStore
 
-	WriteDocRefs(manifestID, collection string, sorted []DocRef) error
+	// WriteDocRefs drains refs (already sorted by ID) and persists it,
+	// without requiring the whole collection in memory at once — refs may be
+	// backed by a bounded external-merge-sort spill rather than a slice.
+	// WriteDocRefs always closes refs, including on error.
+	WriteDocRefs(manifestID, collection string, refs docRefIterator) error
 	IterDocRefs(manifestID, collection string) (docRefIterator, error)
 	DeleteDocRefs(manifestID string) error
 }
