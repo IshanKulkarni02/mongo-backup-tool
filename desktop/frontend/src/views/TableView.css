@@ -1,0 +1,70 @@
+.table-pk-hint {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  align-self: center;
+}
+
+.relationship-inspector {
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.relationship-inspector-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.relationship-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.relationship-item {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.relationship-item:last-child {
+  border-bottom: none;
+}
+
+.relationship-item-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  font-size: 0.9em;
+}
+
+.relationship-item-btn:hover {
+  background: var(--color-surface);
+}
+
+.relationship-count {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.relationship-detail {
+  padding: 0 var(--space-2) var(--space-2);
+}

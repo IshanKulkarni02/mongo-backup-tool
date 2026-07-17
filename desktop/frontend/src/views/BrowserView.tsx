@@ -22,6 +22,7 @@ import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
+import { JsonTree } from "../components/JsonTree";
 import { useToast } from "../components/Toast";
 import "./BrowserView.css";
 
@@ -366,7 +367,7 @@ function DocumentsPanel({
         {!loading &&
           result?.documents.map((doc, i) => (
             <Card key={i} className="doc-row">
-              <pre className="doc-json mono">{doc}</pre>
+              <JsonTree json={doc} />
               <div className="doc-actions">
                 <Button variant="ghost" onClick={() => setEditing({ text: doc, isNew: false })}>
                   <Pencil size={14} />

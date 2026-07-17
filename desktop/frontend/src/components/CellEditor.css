@@ -1,0 +1,47 @@
+.cell-value {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px var(--space-1);
+}
+
+.cell-editable {
+  cursor: text;
+  border-radius: var(--radius-sm);
+}
+
+.cell-editable:hover {
+  background: var(--color-bg-subtle);
+}
+
+.cell-number {
+  text-align: right;
+}
+
+.cell-null {
+  display: block;
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: 4px var(--space-1);
+}
+
+.cell-binary {
+  display: block;
+  color: var(--color-text-muted);
+  padding: 4px var(--space-1);
+}
+
+.cell-input {
+  width: 100%;
+  height: 26px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.cell-input:focus {
+  outline: none;
+}

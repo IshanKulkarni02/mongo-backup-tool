@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/spf13/cobra"
 
@@ -21,6 +20,7 @@ var snapshotDiffCmd = &cobra.Command{
 		if err := requireConnAndDB(); err != nil {
 			return err
 		}
+		ctx := cmd.Context()
 
 		from, err := snapshot.Get(snapConn, snapDB, args[0])
 		if err != nil {
@@ -38,7 +38,24 @@ var snapshotDiffCmd = &cobra.Command{
 		defer scope.Close()
 		fromSource := scope.Source(from.ID)
 
-		var diff snapshot.Diff
+		// printed tracks whether StreamDiff produced anything, so we can
+		// still print "No differences." — StreamDiff never builds a full
+		// Diff up front, so there's nothing to call .Empty() on beforehand.
+		printed := false
+		onChange := func(collection string, ct snapshot.ChangeType, id string) error {
+			printed = true
+			var marker string
+			switch ct {
+			case snapshot.Added:
+				marker = "+"
+			case snapshot.Removed:
+				marker = "-"
+			case snapshot.Modified:
+				marker = "~"
+			}
+			fmt.Printf("%s: %s %s\n", collection, marker, id)
+			return nil
+		}
 
 		switch {
 		case len(args) == 2:
@@ -46,8 +63,7 @@ var snapshotDiffCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			diff, err = snapshot.Compare(from, fromSource, to, scope.Source(to.ID))
-			if err != nil {
+			if err := snapshot.StreamDiff(ctx, from, fromSource, to, scope.Source(to.ID), onChange); err != nil {
 				return err
 			}
 
@@ -60,8 +76,8 @@ var snapshotDiffCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			diff, err = snapshot.Compare(from, fromSource, live.Manifest, live.Source())
-			if err != nil {
+			defer live.Close()
+			if err := snapshot.StreamDiff(ctx, from, fromSource, live.Manifest, live.Source(), onChange); err != nil {
 				return err
 			}
 
@@ -69,34 +85,11 @@ var snapshotDiffCmd = &cobra.Command{
 			return fmt.Errorf("provide a second snapshot ID, or pass --live to diff against the current database state")
 		}
 
-		return printDiff(diff)
-	},
-}
-
-func printDiff(diff snapshot.Diff) error {
-	if diff.Empty() {
-		fmt.Println("No differences.")
+		if !printed {
+			fmt.Println("No differences.")
+		}
 		return nil
-	}
-	names := make([]string, 0, len(diff.Collections))
-	for name := range diff.Collections {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		cd := diff.Collections[name]
-		fmt.Printf("%s:\n", name)
-		for _, id := range cd.Added {
-			fmt.Printf("  + %s\n", id)
-		}
-		for _, id := range cd.Modified {
-			fmt.Printf("  ~ %s\n", id)
-		}
-		for _, id := range cd.Removed {
-			fmt.Printf("  - %s\n", id)
-		}
-	}
-	return nil
+	},
 }
 
 func init() {

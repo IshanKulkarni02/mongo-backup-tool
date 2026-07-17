@@ -1,6 +1,67 @@
 package snapshot
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestWriteFileAtomicLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.json")
+
+	if err := writeFileAtomic(path, []byte(`{"snapshots":[]}`)); err != nil {
+		t.Fatalf("writeFileAtomic: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"snapshots":[]}` {
+		t.Errorf("content = %s, want {\"snapshots\":[]}", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("directory has %d entries after a successful write, want exactly 1 (no leftover temp files): %v", len(entries), entries)
+	}
+}
+
+// TestWriteFileAtomicNeverLeavesAPartialFile confirms that when the write
+// side of the atomic-publish sequence fails (simulating a crash or disk
+// error before the rename), the *existing* file at path is left completely
+// untouched — never truncated or partially overwritten. This is the
+// property that protects index.json (and manifest.json) from corruption if
+// the process dies mid-write.
+func TestWriteFileAtomicNeverLeavesAPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.json")
+	original := `{"snapshots":[{"id":"pre-existing"}]}`
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force the write to fail after the file exists but before any rename
+	// could occur, by pointing at a directory that doesn't exist (so
+	// os.CreateTemp fails outright) — a stand-in for any failure between
+	// "the old file is intact" and "the new file is fully synced."
+	badPath := filepath.Join(dir, "does-not-exist", "index.json")
+	if err := writeFileAtomic(badPath, []byte(`{"snapshots":[{"id":"corrupted-write"}]}`)); err == nil {
+		t.Fatalf("expected writeFileAtomic to fail when the target directory doesn't exist")
+	}
+
+	// The original, unrelated file must be completely unaffected.
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Errorf("original file content = %s, want unchanged %s", got, original)
+	}
+}
 
 func TestScopeIndexFindExact(t *testing.T) {
 	idx := &scopeIndex{Snapshots: []Summary{

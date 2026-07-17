@@ -6,7 +6,9 @@
 *.out
 
 # Wails desktop app (added in later phases)
-desktop/build/
+# Only the compiled output is ignored — desktop/build/ also holds tracked
+# source (Info.plist, the NSIS installer script, packaging scripts).
+desktop/build/bin/
 desktop/frontend/dist/
 desktop/frontend/node_modules/
 
