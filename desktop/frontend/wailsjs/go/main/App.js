@@ -26,6 +26,14 @@ export function ClassifySQL(arg1) {
   return window['go']['main']['App']['ClassifySQL'](arg1);
 }
 
+export function ClearQueryHistory() {
+  return window['go']['main']['App']['ClearQueryHistory']();
+}
+
+export function CloneRemote(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['CloneRemote'](arg1, arg2, arg3, arg4);
+}
+
 export function CompareVectors(arg1, arg2) {
   return window['go']['main']['App']['CompareVectors'](arg1, arg2);
 }
@@ -50,16 +58,16 @@ export function DeleteBackup(arg1) {
   return window['go']['main']['App']['DeleteBackup'](arg1);
 }
 
+export function DeleteDocument(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteDocument'](arg1, arg2, arg3, arg4);
+}
+
 export function DeleteSavedQuery(arg1) {
   return window['go']['main']['App']['DeleteSavedQuery'](arg1);
 }
 
 export function DeleteWidget(arg1) {
   return window['go']['main']['App']['DeleteWidget'](arg1);
-}
-
-export function DeleteDocument(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['DeleteDocument'](arg1, arg2, arg3, arg4);
 }
 
 export function DiffCollectionChanges(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
@@ -94,6 +102,14 @@ export function ExplainWithAI(arg1, arg2, arg3) {
   return window['go']['main']['App']['ExplainWithAI'](arg1, arg2, arg3);
 }
 
+export function ExportQueryResultsCSV(arg1, arg2) {
+  return window['go']['main']['App']['ExportQueryResultsCSV'](arg1, arg2);
+}
+
+export function ExportQueryResultsJSON(arg1, arg2) {
+  return window['go']['main']['App']['ExportQueryResultsJSON'](arg1, arg2);
+}
+
 export function FixSQLError(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['FixSQLError'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
@@ -110,10 +126,6 @@ export function GenerateAggregation(arg1, arg2, arg3) {
   return window['go']['main']['App']['GenerateAggregation'](arg1, arg2, arg3);
 }
 
-export function GenerateSchemaMigration(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['main']['App']['GenerateSchemaMigration'](arg1, arg2, arg3, arg4, arg5);
-}
-
 export function GenerateMockData(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['GenerateMockData'](arg1, arg2, arg3, arg4, arg5);
 }
@@ -122,12 +134,24 @@ export function GenerateSQL(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['GenerateSQL'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function GenerateSchemaMigration(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GenerateSchemaMigration'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function GetAISettings() {
   return window['go']['main']['App']['GetAISettings']();
 }
 
 export function GetTableSchema(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetTableSchema'](arg1, arg2, arg3);
+}
+
+export function ImportCSV(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['ImportCSV'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
+export function InitRemote(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['InitRemote'](arg1, arg2, arg3, arg4);
 }
 
 export function InsertDocument(arg1, arg2, arg3, arg4) {
@@ -142,12 +166,16 @@ export function InstallDependencies() {
   return window['go']['main']['App']['InstallDependencies']();
 }
 
-export function IsWebhookListenerRunning() {
-  return window['go']['main']['App']['IsWebhookListenerRunning']();
-}
-
 export function InstallOllama() {
   return window['go']['main']['App']['InstallOllama']();
+}
+
+export function IsRemoteInitialized(arg1, arg2) {
+  return window['go']['main']['App']['IsRemoteInitialized'](arg1, arg2);
+}
+
+export function IsWebhookListenerRunning() {
+  return window['go']['main']['App']['IsWebhookListenerRunning']();
 }
 
 export function ListBackups() {
@@ -170,16 +198,16 @@ export function ListOllamaModels(arg1) {
   return window['go']['main']['App']['ListOllamaModels'](arg1);
 }
 
+export function ListQueryHistory(arg1, arg2) {
+  return window['go']['main']['App']['ListQueryHistory'](arg1, arg2);
+}
+
 export function ListReferencingTables(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListReferencingTables'](arg1, arg2, arg3);
 }
 
 export function ListSavedQueries() {
   return window['go']['main']['App']['ListSavedQueries']();
-}
-
-export function ListWidgets() {
-  return window['go']['main']['App']['ListWidgets']();
 }
 
 export function ListSnapshots(arg1, arg2) {
@@ -190,8 +218,16 @@ export function ListTables(arg1, arg2) {
   return window['go']['main']['App']['ListTables'](arg1, arg2);
 }
 
+export function ListWidgets() {
+  return window['go']['main']['App']['ListWidgets']();
+}
+
 export function ManualInstallInstructions() {
   return window['go']['main']['App']['ManualInstallInstructions']();
+}
+
+export function PickCSVFile() {
+  return window['go']['main']['App']['PickCSVFile']();
 }
 
 export function PickMigrationsFolder() {
@@ -206,12 +242,28 @@ export function PullOllamaModel(arg1, arg2) {
   return window['go']['main']['App']['PullOllamaModel'](arg1, arg2);
 }
 
+export function PullRemote(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['PullRemote'](arg1, arg2, arg3, arg4);
+}
+
+export function PushRemote(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['PushRemote'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function QueryDocuments(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['main']['App']['QueryDocuments'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function ReadCSVHeader(arg1) {
+  return window['go']['main']['App']['ReadCSVHeader'](arg1);
+}
+
 export function RemoveConnection(arg1) {
   return window['go']['main']['App']['RemoveConnection'](arg1);
+}
+
+export function RerunFromHistory(arg1) {
+  return window['go']['main']['App']['RerunFromHistory'](arg1);
 }
 
 export function RestoreBackup(arg1, arg2) {
@@ -226,8 +278,8 @@ export function RunAggregation(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['RunAggregation'](arg1, arg2, arg3, arg4);
 }
 
-export function RunSavedQuery(arg1) {
-  return window['go']['main']['App']['RunSavedQuery'](arg1);
+export function RunCrossDatabaseSearch(arg1) {
+  return window['go']['main']['App']['RunCrossDatabaseSearch'](arg1);
 }
 
 export function RunSQLExecute(arg1, arg2, arg3, arg4) {
@@ -242,12 +294,12 @@ export function RunSQLQueryJob(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunSQLQueryJob'](arg1, arg2, arg3);
 }
 
-export function SaveAISettings(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['SaveAISettings'](arg1, arg2, arg3, arg4);
+export function RunSavedQuery(arg1) {
+  return window['go']['main']['App']['RunSavedQuery'](arg1);
 }
 
-export function SecureCredentialStorageAvailable() {
-  return window['go']['main']['App']['SecureCredentialStorageAvailable']();
+export function SaveAISettings(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveAISettings'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveMigration(arg1, arg2, arg3, arg4) {
@@ -260,6 +312,10 @@ export function SaveQuery(arg1, arg2, arg3, arg4, arg5) {
 
 export function SaveWidget(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['SaveWidget'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function SecureCredentialStorageAvailable() {
+  return window['go']['main']['App']['SecureCredentialStorageAvailable']();
 }
 
 export function StartWebhookListener(arg1) {

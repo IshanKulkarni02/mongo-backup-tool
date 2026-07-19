@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
 )
 
 var unsafeChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)

@@ -11,8 +11,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/testmongod"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
 
 func requireGitAndLFS(t *testing.T) {
@@ -50,7 +50,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 // — and the doc-ref list.
 func TestPushCloneRoundTripsContent(t *testing.T) {
 	requireGitAndLFS(t)
-	t.Setenv("MONGOBAK_CONFIG_DIR", t.TempDir())
+	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
 
 	uri := testmongod.Start(t, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

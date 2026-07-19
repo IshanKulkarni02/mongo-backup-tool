@@ -7,17 +7,56 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/humansize"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
+	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
+	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
+
+// openSQLSession opens a one-shot engine.SQLSession for a saved connection —
+// the TUI has no long-lived session cache, so callers must invoke the
+// returned release func when done.
+func openSQLSession(conn config.Connection) (engine.SQLSession, func(), error) {
+	eng, err := engine.Lookup(conn.EngineID())
+	if err != nil {
+		return nil, nil, err
+	}
+	connCfg := engine.ConnConfig{
+		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
+		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
+	}
+	if conn.SSHHost != "" {
+		connCfg.SSHTunnel = &tunnel.Config{
+			Host:          conn.SSHHost,
+			User:          conn.SSHUser,
+			Password:      conn.SSHPassword,
+			PrivateKeyPEM: conn.SSHPrivateKey,
+		}
+	}
+	sess, err := eng.Open(context.Background(), connCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	ss, ok := sess.(engine.SQLSession)
+	if !ok {
+		sess.Close(context.Background())
+		return nil, nil, fmt.Errorf("connection %q isn't a SQL database", conn.Name)
+	}
+	return ss, func() { ss.Close(context.Background()) }, nil
+}
 
 type depsCheckedMsg struct{ statuses []depmanager.Status }
 type depsInstallLineMsg struct{ line string }
 type depsInstallDoneMsg struct{ err error }
+
+type desktopAppResolvedMsg struct {
+	launched bool // true: the app was already installed and just launched
+	err      error
+}
 
 type connectionsLoadedMsg struct {
 	conns []config.Connection
@@ -48,6 +87,39 @@ func checkDepsCmd() tea.Msg {
 	return depsCheckedMsg{statuses: depmanager.Check()}
 }
 
+// persistLauncherChoice saves the terminal-vs-desktop choice so the chooser
+// only appears once. Best-effort: a write failure just means it's asked
+// again next run, not worth surfacing as an error on top of the choice
+// itself.
+func persistLauncherChoice(choice string) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	cfg.Launcher.Choice = choice
+	_ = config.Save(cfg)
+}
+
+func chooseTerminalCmd() tea.Msg {
+	persistLauncherChoice("terminal")
+	return depsCheckedMsg{statuses: depmanager.Check()}
+}
+
+func chooseDesktopAppCmd() tea.Msg {
+	persistLauncherChoice("desktop")
+	status := depmanager.CheckDesktopApp(context.Background())
+	if status.Installed {
+		err := depmanager.LaunchDesktopApp(context.Background(), status.Path)
+		return desktopAppResolvedMsg{launched: true, err: err}
+	}
+	err := depmanager.AutoInstallDesktopApp(context.Background(), func(line string) {
+		if programRef != nil {
+			programRef.Send(depsInstallLineMsg{line: line})
+		}
+	})
+	return desktopAppResolvedMsg{launched: false, err: err}
+}
+
 // programRef is set once by Run() before the program starts, so a running
 // tea.Cmd (which has no direct handle to the program) can stream output
 // back via Send while a long-running install command executes.
@@ -70,13 +142,27 @@ func loadConnectionsCmd() tea.Msg {
 	return connectionsLoadedMsg{conns: cfg.Connections}
 }
 
-func saveConnectionCmd(name, uri string) tea.Cmd {
+func saveConnectionCmd(name, uri, engineID string) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := config.Load()
 		if err != nil {
 			return connectionSavedMsg{err: err}
 		}
-		cfg.Upsert(config.Connection{Name: name, URI: uri, CreatedAt: time.Now().Format(time.RFC3339)})
+		// Preserve any tenant value already set for an existing connection
+		// of the same name, same as the CLI's `connection add` — only the
+		// desktop app's SwitchTenant sets this, and re-saving here
+		// shouldn't clear it.
+		tenantValue := ""
+		if existing, ok := cfg.Find(name); ok {
+			tenantValue = existing.TenantValue
+		}
+		cfg.Upsert(config.Connection{
+			Name:        name,
+			URI:         uri,
+			Engine:      engineID,
+			TenantValue: tenantValue,
+			CreatedAt:   time.Now().Format(time.RFC3339),
+		})
 		return connectionSavedMsg{err: config.Save(cfg)}
 	}
 }
@@ -107,9 +193,35 @@ func loadBackupsCmd() tea.Msg {
 	return backupsLoadedMsg{items: idx.Backups}
 }
 
-func createSnapshotCmd(connName, uri, db, message string) tea.Cmd {
+func createSnapshotCmd(conn config.Connection, db, message string) tea.Cmd {
 	return func() tea.Msg {
-		res, err := snapshot.Create(snapshot.CreateOptions{Connection: connName, URI: uri, Database: db, Message: message})
+		eng, err := engine.Lookup(conn.EngineID())
+		if err != nil {
+			return actionDoneMsg{err: err}
+		}
+		if eng.Capabilities().SQL {
+			sess, release, err := openSQLSession(conn)
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+			defer release()
+			res, err := snapshot.CreateSQL(context.Background(), snapshot.SQLCreateOptions{
+				Connection: conn.Name, Database: db, Message: message, Session: sess,
+			})
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+			lines := []string{
+				fmt.Sprintf("Snapshot %s created", res.Summary.ID),
+				fmt.Sprintf("%d rows (%d new objects)", res.Summary.DocCount, res.Summary.NewObjects),
+			}
+			if len(res.SkippedTables) > 0 {
+				lines = append(lines, fmt.Sprintf("Skipped %d table(s) with no primary key", len(res.SkippedTables)))
+			}
+			return actionDoneMsg{lines: lines}
+		}
+
+		res, err := snapshot.Create(snapshot.CreateOptions{Connection: conn.Name, URI: conn.URI, Database: db, Message: message})
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -124,19 +236,29 @@ func createSnapshotCmd(connName, uri, db, message string) tea.Cmd {
 	}
 }
 
-func diffLiveCmd(connName, uri, db, snapshotID string) tea.Cmd {
+func diffLiveCmd(conn config.Connection, db, snapshotID string) tea.Cmd {
 	return func() tea.Msg {
-		from, err := snapshot.Get(connName, db, snapshotID)
+		eng, err := engine.Lookup(conn.EngineID())
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
-		scope, err := snapshot.OpenScope(connName, db)
+		// ScanLive only speaks the Mongo wire protocol; comparing a SQL
+		// snapshot against its live database isn't implemented yet.
+		if eng.Capabilities().SQL {
+			return actionDoneMsg{err: fmt.Errorf("comparing against the live database isn't supported for SQL connections yet")}
+		}
+
+		from, err := snapshot.Get(conn.Name, db, snapshotID)
+		if err != nil {
+			return actionDoneMsg{err: err}
+		}
+		scope, err := snapshot.OpenScope(conn.Name, db)
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
 		defer scope.Close()
 
-		live, err := snapshot.ScanLive(uri, db)
+		live, err := snapshot.ScanLive(conn.URI, db)
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -156,17 +278,47 @@ func diffLiveCmd(connName, uri, db, snapshotID string) tea.Cmd {
 	}
 }
 
-func restoreSnapshotCmd(connName, uri, db, snapshotID string) tea.Cmd {
+func restoreSnapshotCmd(conn config.Connection, db, snapshotID string) tea.Cmd {
 	return func() tea.Msg {
+		eng, err := engine.Lookup(conn.EngineID())
+		if err != nil {
+			return actionDoneMsg{err: err}
+		}
+		if eng.Capabilities().SQL {
+			sess, release, err := openSQLSession(conn)
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+			defer release()
+			// RestoreSQLWithSafety's error message already says whether it
+			// auto-rolled back, so it's passed straight through here.
+			result, safety, _, err := snapshot.RestoreSQLWithSafety(context.Background(), snapshot.SQLRestoreOptions{
+				SourceConnection: conn.Name,
+				SourceDatabase:   db,
+				SnapshotID:       snapshotID,
+				Session:          sess,
+				EngineID:         conn.EngineID(),
+				Drop:             true,
+			}, conn.Name)
+			if err != nil {
+				return actionDoneMsg{err: err}
+			}
+			lines := []string{fmt.Sprintf("Restored %d rows across %d table(s)", result.DocsWritten, len(result.Collections))}
+			if safety != nil {
+				lines = append(lines, fmt.Sprintf("Safety snapshot taken first: %s", safety.Summary.ID))
+			}
+			return actionDoneMsg{lines: lines}
+		}
+
 		// RestoreWithSafety's error message already says whether it
 		// auto-rolled back, so it's passed straight through here.
 		result, safety, _, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
-			SourceConnection: connName,
+			SourceConnection: conn.Name,
 			SourceDatabase:   db,
 			SnapshotID:       snapshotID,
-			TargetURI:        uri,
+			TargetURI:        conn.URI,
 			Drop:             true,
-		}, connName)
+		}, conn.Name)
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}

@@ -1,7 +1,10 @@
-# mongobak
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/dbhelm-logo-dark.png">
+  <img src="assets/brand/dbhelm-logo-light.png" alt="DBHelm" width="360">
+</picture>
 
 A cross-platform tool for backing up, restoring, and version-controlling
-MongoDB databases — local deployments or Atlas clusters. `mongobak` gives you
+MongoDB databases — local deployments or Atlas clusters. `dbhelm` gives you
 two complementary ways to protect your data: full-fidelity **backups** (via
 the official MongoDB Database Tools) for portable, restore-anywhere archives,
 and git-like **snapshots** — content-addressed, deduped, diffable,
@@ -17,7 +20,7 @@ on first launch.
 
 ## Table of contents
 
-- [Why mongobak](#why-mongobak)
+- [Why dbhelm](#why-dbhelm)
 - [Install](#install)
 - [Prerequisites: MongoDB Database Tools](#prerequisites-mongodb-database-tools)
 - [Getting started](#getting-started)
@@ -37,13 +40,13 @@ on first launch.
 - [Development](#development)
 - [Roadmap](#roadmap)
 
-## Why mongobak
+## Why dbhelm
 
 Most MongoDB backup tools stop at "run mongodump on a cron." That's fine
 until you need to know *what changed* between two backups, or you want to
 take a cheap checkpoint every few minutes without burning disk space on
 mostly-identical dumps, or you want to roll back one bad migration without
-restoring an entire multi-GB archive. mongobak covers both ends:
+restoring an entire multi-GB archive. dbhelm covers both ends:
 
 - Need a **portable, restore-anywhere archive** (e.g. before decommissioning
   a server, or to hand to someone else)? Use a **backup**.
@@ -60,23 +63,23 @@ version is older).
 ```bash
 git clone https://github.com/IshanKulkarni02/mongo-backup-tool.git
 cd mongo-backup-tool
-go build -o mongobak .
+go build -o dbhelm .
 ```
 
-This produces a single `mongobak` binary. Move it onto your `PATH` (e.g.
-`sudo mv mongobak /usr/local/bin/` on macOS/Linux) so you can run it from
-anywhere, or just invoke it as `./mongobak` from the build directory.
+This produces a single `dbhelm` binary. Move it onto your `PATH` (e.g.
+`sudo mv dbhelm /usr/local/bin/` on macOS/Linux) so you can run it from
+anywhere, or just invoke it as `./dbhelm` from the build directory.
 
 ## Prerequisites: MongoDB Database Tools
 
-**Backups** (`mongobak backup`/`restore`) shell out to the official
-`mongodump`/`mongorestore` binaries. **Snapshots** (`mongobak snapshot ...`)
+**Backups** (`dbhelm backup`/`restore`) shell out to the official
+`mongodump`/`mongorestore` binaries. **Snapshots** (`dbhelm snapshot ...`)
 talk to MongoDB directly via the Go driver and do *not* need these tools.
 
 Check what's installed:
 
 ```bash
-mongobak doctor
+dbhelm doctor
 ```
 
 If `mongodump`/`mongorestore` are missing, `doctor` prints install
@@ -88,19 +91,19 @@ instructions for your OS:
 - Or download prebuilt binaries directly from
   [mongodb.com/try/download/database-tools](https://www.mongodb.com/try/download/database-tools)
 
-If the tools are installed somewhere not on your `PATH`, point mongobak at
+If the tools are installed somewhere not on your `PATH`, point dbhelm at
 them directly instead of modifying your `PATH`:
 
 ```bash
-export MONGOBAK_MONGODUMP_PATH=/path/to/mongodump
-export MONGOBAK_MONGORESTORE_PATH=/path/to/mongorestore
+export DBHELM_MONGODUMP_PATH=/path/to/mongodump
+export DBHELM_MONGORESTORE_PATH=/path/to/mongorestore
 ```
 
-Or let mongobak install them for you (macOS via Homebrew, Windows via
+Or let dbhelm install them for you (macOS via Homebrew, Windows via
 winget — always asks for confirmation first, never runs silently):
 
 ```bash
-mongobak doctor install
+dbhelm doctor install
 ```
 
 ## Getting started
@@ -110,23 +113,23 @@ the default port:
 
 ```bash
 # 1. Check dependencies
-mongobak doctor
+dbhelm doctor
 
 # 2. Save a connection
-mongobak connection add local --uri "mongodb://localhost:27017"
+dbhelm connection add local --uri "mongodb://localhost:27017"
 
 # 3. Confirm it works and see what databases exist
-mongobak connection test local
+dbhelm connection test local
 
 # 4. Take your first snapshot of a database
-mongobak snapshot create --connection local --db myapp -m "initial checkpoint"
+dbhelm snapshot create --connection local --db myapp -m "initial checkpoint"
 
 # 5. See it in your snapshot history
-mongobak snapshot log --connection local --db myapp
+dbhelm snapshot log --connection local --db myapp
 
 # 6. Or take a full portable backup instead/as well
-mongobak backup --connection local --db myapp
-mongobak list
+dbhelm backup --connection local --db myapp
+dbhelm list
 ```
 
 That's the whole loop. Everything else in this README is detail on top of
@@ -135,11 +138,11 @@ those six commands.
 ## Interactive mode (TUI)
 
 Everything above works as flags for scripting/automation, but you don't have
-to memorize any of it. Run mongobak with no arguments for a full-screen,
+to memorize any of it. Run dbhelm with no arguments for a full-screen,
 arrow-key-driven interface over the same core:
 
 ```bash
-mongobak
+dbhelm
 ```
 
 It walks you through: pick or add a connection → pick or type a database →
@@ -178,38 +181,38 @@ don't need to leave the terminal or have network access to look something
 up:
 
 ```bash
-mongobak guide             # the full walkthrough
-mongobak guide quickstart  # just the getting-started steps
-mongobak guide connections # just the connections section
-mongobak guide backup      # just classic backups
-mongobak guide snapshot    # just snapshots/version control
-mongobak guide concepts    # how content-addressing/dedup/diff work
-mongobak guide troubleshooting
+dbhelm guide             # the full walkthrough
+dbhelm guide quickstart  # just the getting-started steps
+dbhelm guide connections # just the connections section
+dbhelm guide backup      # just classic backups
+dbhelm guide snapshot    # just snapshots/version control
+dbhelm guide concepts    # how content-addressing/dedup/diff work
+dbhelm guide troubleshooting
 ```
 
-Run `mongobak guide` with no topic to see the full guide, or `mongobak guide`
+Run `dbhelm guide` with no topic to see the full guide, or `dbhelm guide`
 followed by any topic name above to jump straight to that section.
 
 ## Connections
 
 A connection is a saved, named MongoDB URI — local (`mongodb://`) or Atlas
-(`mongodb+srv://`). Everything else in mongobak references a database by
+(`mongodb+srv://`). Everything else in dbhelm references a database by
 `--connection <name> --db <name>` rather than a raw URI, so you type
 connection strings (and credentials) once.
 
 ```bash
 # Add a connection
-mongobak connection add local --uri "mongodb://localhost:27017"
-mongobak connection add atlas --uri "mongodb+srv://user:pass@cluster0.mongodb.net"
+dbhelm connection add local --uri "mongodb://localhost:27017"
+dbhelm connection add atlas --uri "mongodb+srv://user:pass@cluster0.mongodb.net"
 
 # List saved connections (passwords are always redacted in output)
-mongobak connection list
+dbhelm connection list
 
 # Test a connection — confirms it's reachable and lists its databases
-mongobak connection test local
+dbhelm connection test local
 
 # Remove a connection
-mongobak connection remove local
+dbhelm connection remove local
 ```
 
 Connection URIs (which may contain credentials) are stored in a config file
@@ -221,34 +224,34 @@ A backup is a single, portable, gzip-compressed archive file produced by
 `mongodump --archive --gzip`, restored with `mongorestore`. It's the same
 format DBAs have used for years: full fidelity (every BSON type, all
 indexes), and the resulting `.archive.gz` file can be copied anywhere and
-restored on a totally different machine without mongobak even being
+restored on a totally different machine without dbhelm even being
 involved (plain `mongorestore --archive=... --gzip` works on it directly).
 
 ```bash
 # Back up one database
-mongobak backup --connection local --db myapp
+dbhelm backup --connection local --db myapp
 
 # Back up every database on the connection
-mongobak backup --connection local
+dbhelm backup --connection local
 
 # List local backup archives (ID, connection, database, size, date, filename)
-mongobak list
+dbhelm list
 
 # Restore a backup as-is
-mongobak restore --backup <id> --connection local
+dbhelm restore --backup <id> --connection local
 
 # Restore into a different database name, without touching the original
-mongobak restore --backup <id> --connection local --target-db myapp_staging
+dbhelm restore --backup <id> --connection local --target-db myapp_staging
 
 # Restore, dropping existing collections first (overwrite in place)
-mongobak restore --backup <id> --connection local --drop
+dbhelm restore --backup <id> --connection local --drop
 
 # Delete a local backup archive
-mongobak delete <id>
+dbhelm delete <id>
 ```
 
 Backups are heavier than snapshots (a full dump every time, no dedup) but
-maximally portable and don't depend on mongobak's storage format — treat
+maximally portable and don't depend on dbhelm's storage format — treat
 them as your "take this and walk away" option.
 
 ## Snapshots (version control)
@@ -293,44 +296,44 @@ bounded-memory by design (streamed/chunked, never a full collection or a
 full change list held in RAM) — verified by an opt-in load test at
 1,000,000 documents with a 15%/5%/2% modify/delete/insert mutation between
 two snapshots (`internal/snapshot/loadtest_test.go`; run it yourself with
-`MONGOBAK_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v`).
+`DBHELM_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v`).
 
 ### Snapshot command reference
 
 ```bash
 # Take a snapshot ("commit") of a database
-mongobak snapshot create --connection local --db myapp -m "before migration"
+dbhelm snapshot create --connection local --db myapp -m "before migration"
 
 # Show snapshot history, newest first
-mongobak snapshot log --connection local --db myapp
+dbhelm snapshot log --connection local --db myapp
 
 # Diff two snapshots
-mongobak snapshot diff <id-a> <id-b> --connection local --db myapp
+dbhelm snapshot diff <id-a> <id-b> --connection local --db myapp
 
 # Diff a snapshot against the current, live state of the database
-mongobak snapshot diff <id-a> --connection local --db myapp --live
+dbhelm snapshot diff <id-a> --connection local --db myapp --live
 
 # Restore a snapshot back into the same database, in place
-mongobak snapshot restore --snapshot <id> --connection local --db myapp
+dbhelm snapshot restore --snapshot <id> --connection local --db myapp
 
 # Restore into a different database, leaving the original untouched
-mongobak snapshot restore --snapshot <id> --connection local --db myapp --target-db myapp_staging
+dbhelm snapshot restore --snapshot <id> --connection local --db myapp --target-db myapp_staging
 
 # Restore, dropping existing collections first — this always takes an
 # automatic safety snapshot of the target before it touches anything
-mongobak snapshot restore --snapshot <id> --connection local --db myapp --drop
+dbhelm snapshot restore --snapshot <id> --connection local --db myapp --drop
 
 # Restore just one collection instead of the whole snapshot
-mongobak snapshot restore --snapshot <id> --connection local --db myapp --collection users
+dbhelm snapshot restore --snapshot <id> --connection local --db myapp --collection users
 
 # Restore into a different connection entirely (e.g. snapshot from prod, restore to staging)
-mongobak snapshot restore --snapshot <id> --connection prod --db myapp --target-connection staging
+dbhelm snapshot restore --snapshot <id> --connection prod --db myapp --target-connection staging
 
 # Tag a snapshot — tagged snapshots are always kept, never garbage-collected
-mongobak snapshot tag <id> v1.0-before-migration --connection local --db myapp
+dbhelm snapshot tag <id> v1.0-before-migration --connection local --db myapp
 
 # Prune old untagged snapshots beyond the 10 most recent, and reclaim their storage
-mongobak snapshot gc --connection local --db myapp --keep-last 10
+dbhelm snapshot gc --connection local --db myapp --keep-last 10
 ```
 
 Snapshot IDs can be shortened to any unique prefix — you don't need to type
@@ -343,7 +346,7 @@ the full UUID as long as it's unambiguous.
 | Format | Portable `.archive.gz` file | Content-addressed store, not portable as a single file |
 | Cost per checkpoint | Full dump every time | Only changed documents are stored |
 | History/diff | No — one file, one point in time | Yes — full history, diff between any two points |
-| Restore elsewhere | Yes, with plain `mongorestore`, no mongobak needed | Only via mongobak, and only from the same store |
+| Restore elsewhere | Yes, with plain `mongorestore`, no dbhelm needed | Only via dbhelm, and only from the same store |
 | Best for | Portable exports, "walk away with this," disaster recovery archives | Frequent checkpoints, pre-migration safety, rollback, understanding what changed |
 
 Many workflows use both: a snapshot before every risky operation for instant
@@ -354,33 +357,33 @@ recovery.
 
 **Before a risky migration or bulk edit:**
 ```bash
-mongobak snapshot create --connection prod --db myapp -m "before user-schema migration"
-mongobak snapshot tag <id> pre-migration
+dbhelm snapshot create --connection prod --db myapp -m "before user-schema migration"
+dbhelm snapshot tag <id> pre-migration
 # ...run your migration...
-mongobak snapshot diff pre-migration --connection prod --db myapp --live   # see exactly what changed
+dbhelm snapshot diff pre-migration --connection prod --db myapp --live   # see exactly what changed
 # if it went wrong:
-mongobak snapshot restore --snapshot pre-migration --connection prod --db myapp --drop
+dbhelm snapshot restore --snapshot pre-migration --connection prod --db myapp --drop
 ```
 
 **Checking what changed since yesterday, without restoring anything:**
 ```bash
-mongobak snapshot log --connection prod --db myapp
-mongobak snapshot diff <yesterdays-id> --connection prod --db myapp --live
+dbhelm snapshot log --connection prod --db myapp
+dbhelm snapshot diff <yesterdays-id> --connection prod --db myapp --live
 ```
 
 **Copying a database's state from one environment to another:**
 ```bash
-mongobak snapshot create --connection prod --db myapp -m "sync to staging"
-mongobak snapshot restore --snapshot <id> --connection prod --db myapp \
+dbhelm snapshot create --connection prod --db myapp -m "sync to staging"
+dbhelm snapshot restore --snapshot <id> --connection prod --db myapp \
   --target-connection staging --target-db myapp --drop
 ```
 
 **Scheduled backups via cron** (every command is fully scriptable — no
 interactive prompts):
 ```cron
-0 * * * * /usr/local/bin/mongobak snapshot create --connection prod --db myapp -m "hourly checkpoint"
-0 2 * * * /usr/local/bin/mongobak backup --connection prod --db myapp
-30 2 * * * /usr/local/bin/mongobak snapshot gc --connection prod --db myapp --keep-last 168
+0 * * * * /usr/local/bin/dbhelm snapshot create --connection prod --db myapp -m "hourly checkpoint"
+0 2 * * * /usr/local/bin/dbhelm backup --connection prod --db myapp
+30 2 * * * /usr/local/bin/dbhelm snapshot gc --connection prod --db myapp --keep-last 168
 ```
 
 ## Where your data lives
@@ -388,13 +391,13 @@ interactive prompts):
 Connections, backups, and snapshots are stored per-user under your OS's
 standard config directory:
 
-- macOS: `~/Library/Application Support/mongobak`
-- Windows: `%AppData%\mongobak`
-- Linux: `~/.config/mongobak`
+- macOS: `~/Library/Application Support/dbhelm`
+- Windows: `%AppData%\dbhelm`
+- Linux: `~/.config/dbhelm`
 
 Layout:
 ```
-mongobak/
+dbhelm/
 ├── config.json                    # saved connections (owner-only permissions: credentials live here)
 ├── backups/                       # classic backup archives + index.json
 └── snapshots/
@@ -406,7 +409,7 @@ mongobak/
 ```
 
 Because `config.json` can contain database credentials, it's written with
-owner-only (`0600`) file permissions, and mongobak always redacts passwords
+owner-only (`0600`) file permissions, and dbhelm always redacts passwords
 in any command output.
 
 ## Remote sync (Git/GitHub)
@@ -422,17 +425,17 @@ regular commits).
 # One-time setup for a connection+database — must be a brand-new scope
 # (remote sync needs the "fs" storage backend, not the default bbolt one;
 # see "Where your data lives" above)
-mongobak remote init --connection local --db myapp --url git@github.com:you/myapp-snapshots.git
+dbhelm remote init --connection local --db myapp --url git@github.com:you/myapp-snapshots.git
 
 # After taking snapshots as usual, push the history
-mongobak snapshot create --connection local --db myapp -m "checkpoint"
-mongobak remote push --connection local --db myapp
+dbhelm snapshot create --connection local --db myapp -m "checkpoint"
+dbhelm remote push --connection local --db myapp
 
 # Elsewhere (or after a fresh install), pull an existing history down
-mongobak remote clone git@github.com:you/myapp-snapshots.git --connection local --db myapp
+dbhelm remote clone git@github.com:you/myapp-snapshots.git --connection local --db myapp
 
 # Keep in sync going forward
-mongobak remote pull --connection local --db myapp
+dbhelm remote pull --connection local --db myapp
 ```
 
 `remote init` switches a brand-new connection+database scope to the
@@ -440,68 +443,68 @@ file-per-document storage backend and configures Git LFS to track it; it
 can't convert a scope that's already using the default bbolt backend — use
 a fresh connection or database name for a remote-synced one. Pushing relies
 entirely on your own Git credentials (SSH key, `gh auth login`, etc.) —
-mongobak only ever runs `git`/`git-lfs` commands, never stores or asks for
+dbhelm only ever runs `git`/`git-lfs` commands, never stores or asks for
 credentials itself.
 
 ## Troubleshooting
 
 **`mongodump`/`mongorestore` not found**
-Run `mongobak doctor` for OS-specific install instructions, or set
-`MONGOBAK_MONGODUMP_PATH`/`MONGOBAK_MONGORESTORE_PATH` if they're installed
+Run `dbhelm doctor` for OS-specific install instructions, or set
+`DBHELM_MONGODUMP_PATH`/`DBHELM_MONGORESTORE_PATH` if they're installed
 somewhere not on your `PATH`.
 
 **"this deployment doesn't support readConcern:snapshot"**
 This is informational, not an error — it means the target is a standalone
-`mongod` rather than a replica set, so mongobak took a plain (non-transactional)
+`mongod` rather than a replica set, so dbhelm took a plain (non-transactional)
 snapshot instead of a point-in-time-consistent one. Atlas clusters and local
 replica sets (`mongod --replSet <name>`) support the consistent path.
 
 **`opening snapshot store ...: timeout`**
 The embedded snapshot store can only be opened by one process at a time.
-This usually means another mongobak command (or a hung previous run) still
-has that connection+database's store open — make sure no other mongobak
+This usually means another dbhelm command (or a hung previous run) still
+has that connection+database's store open — make sure no other dbhelm
 process is running against the same connection+database, then retry.
 
 **No connection named "X"**
-Check `mongobak connection list` — connection names are case-sensitive and
+Check `dbhelm connection list` — connection names are case-sensitive and
 must be added with `connection add` before they can be used elsewhere.
 
 ## Full command reference
 
 ```
-mongobak connection add <name> --uri <uri>      Save a connection
-mongobak connection list                        List saved connections
-mongobak connection test <name>                 Test a connection, list its databases
-mongobak connection remove <name>                Remove a saved connection
+dbhelm connection add <name> --uri <uri>      Save a connection
+dbhelm connection list                        List saved connections
+dbhelm connection test <name>                 Test a connection, list its databases
+dbhelm connection remove <name>                Remove a saved connection
 
-mongobak backup --connection <name> [--db <db>] Back up one database, or all databases
-mongobak list                                   List local backup archives
-mongobak restore --backup <id> --connection <name> [--target-db <db>] [--drop]
-mongobak delete <backup-id>                     Delete a local backup archive
+dbhelm backup --connection <name> [--db <db>] Back up one database, or all databases
+dbhelm list                                   List local backup archives
+dbhelm restore --backup <id> --connection <name> [--target-db <db>] [--drop]
+dbhelm delete <backup-id>                     Delete a local backup archive
 
-mongobak snapshot create --connection <name> --db <db> [-m "message"]
-mongobak snapshot log --connection <name> --db <db>
-mongobak snapshot diff <id-a> [id-b] --connection <name> --db <db> [--live]
-mongobak snapshot restore --snapshot <id> --connection <name> --db <db>
+dbhelm snapshot create --connection <name> --db <db> [-m "message"]
+dbhelm snapshot log --connection <name> --db <db>
+dbhelm snapshot diff <id-a> [id-b] --connection <name> --db <db> [--live]
+dbhelm snapshot restore --snapshot <id> --connection <name> --db <db>
     [--target-connection <name>] [--target-db <db>] [--collection <name>] [--drop]
-mongobak snapshot tag <id> <tag> --connection <name> --db <db>
-mongobak snapshot gc --connection <name> --db <db> [--keep-last <n>]
+dbhelm snapshot tag <id> <tag> --connection <name> --db <db>
+dbhelm snapshot gc --connection <name> --db <db> [--keep-last <n>]
 
-mongobak remote init --connection <name> --db <db> [--url <git-url>] [--name origin]
-mongobak remote push --connection <name> --db <db> [--remote origin] [--branch main] [-m "message"]
-mongobak remote pull --connection <name> --db <db> [--remote origin] [--branch main]
-mongobak remote clone <git-url> --connection <name> --db <db> [--branch main]
+dbhelm remote init --connection <name> --db <db> [--url <git-url>] [--name origin]
+dbhelm remote push --connection <name> --db <db> [--remote origin] [--branch main] [-m "message"]
+dbhelm remote pull --connection <name> --db <db> [--remote origin] [--branch main]
+dbhelm remote clone <git-url> --connection <name> --db <db> [--branch main]
 
-mongobak scheduler add --connection <name> --action snapshot|backup --interval <dur> [--db <db>] [-m "message"]
-mongobak scheduler list
-mongobak scheduler remove <id>
-mongobak scheduler run                          Run in the foreground, firing due schedules (Ctrl+C to stop)
+dbhelm scheduler add --connection <name> --action snapshot|backup --interval <dur> [--db <db>] [-m "message"]
+dbhelm scheduler list
+dbhelm scheduler remove <id>
+dbhelm scheduler run                          Run in the foreground, firing due schedules (Ctrl+C to stop)
 
-mongobak doctor                                 Check mongodump/mongorestore are installed
-mongobak doctor install [--yes]                 Automatically install missing dependencies
-mongobak guide [topic]                          Show the in-tool usage guide
-mongobak version                                Print mongobak's version
-mongobak                                        Launch the interactive terminal UI
+dbhelm doctor                                 Check mongodump/mongorestore are installed
+dbhelm doctor install [--yes]                 Automatically install missing dependencies
+dbhelm guide [topic]                          Show the in-tool usage guide
+dbhelm version                                Print dbhelm's version
+dbhelm                                        Launch the interactive terminal UI
 ```
 
 Every command supports `-h`/`--help` for its full flag list.
@@ -509,7 +512,7 @@ Every command supports `-h`/`--help` for its full flag list.
 ## Development
 
 ```bash
-go build -o mongobak .
+go build -o dbhelm .
 go test ./...
 go vet ./...
 gofmt -l .

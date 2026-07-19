@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/secrets"
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 )
 
 // withTempConfigDir points config.Dir() at a fresh temp directory for the
@@ -14,7 +14,7 @@ import (
 func withTempConfigDir(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("MONGOBAK_CONFIG_DIR", dir)
+	t.Setenv("DBHELM_CONFIG_DIR", dir)
 }
 
 func TestSaveMovesPasswordToKeyringWhenAvailable(t *testing.T) {
@@ -60,7 +60,7 @@ func TestSaveMovesPasswordToKeyringWhenAvailable(t *testing.T) {
 
 func TestSaveKeepsFullURIWithoutKeyring(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("MONGOBAK_CONFIG_DIR", dir)
+	t.Setenv("DBHELM_CONFIG_DIR", dir)
 	// Force keyring.Available() to be false by not calling MockInit and
 	// instead exercising the real (unavailable-in-CI) backend indirectly is
 	// unreliable across platforms, so this test only asserts the documented

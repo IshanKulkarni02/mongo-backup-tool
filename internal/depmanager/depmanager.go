@@ -1,4 +1,4 @@
-// Package depmanager detects the external tools mongobak depends on
+// Package depmanager detects the external tools dbhelm depends on
 // (currently the MongoDB Database Tools) and offers manual or automatic
 // installation. It's shared by the CLI (doctor), the TUI's startup check,
 // and — eventually — the desktop app's dependency modal, so all three
@@ -10,24 +10,24 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
 )
 
-// Dependency describes one external tool mongobak needs.
+// Dependency describes one external tool dbhelm needs.
 type Dependency struct {
 	Name        string // binary name, e.g. "mongodump"
 	Description string
 }
 
-// Required lists dependencies mongobak's backup/restore commands cannot
+// Required lists dependencies dbhelm's backup/restore commands cannot
 // function without. (Snapshots talk to MongoDB directly via the Go driver
 // and need none of these.)
 var Required = []Dependency{
-	{Name: "mongodump", Description: "MongoDB Database Tools — used by `mongobak backup`"},
-	{Name: "mongorestore", Description: "MongoDB Database Tools — used by `mongobak restore`"},
+	{Name: "mongodump", Description: "MongoDB Database Tools — used by `dbhelm backup`"},
+	{Name: "mongorestore", Description: "MongoDB Database Tools — used by `dbhelm restore`"},
 }
 
-// Optional lists dependencies only one specific feature needs — mongobak's
+// Optional lists dependencies only one specific feature needs — dbhelm's
 // core backup/snapshot workflows work fully without them; only that one
 // feature (remote sync) is affected if they're missing. Kept separate from
 // Required so callers (doctor, the TUI's startup check, the desktop
@@ -35,8 +35,8 @@ var Required = []Dependency{
 // extra feature" distinctly rather than treating every gap as equally
 // urgent.
 var Optional = []Dependency{
-	{Name: "git", Description: "Git — used by `mongobak remote` to sync a database's snapshot history"},
-	{Name: "git-lfs", Description: "Git LFS — used by `mongobak remote` to track snapshot object content without bloating the repo"},
+	{Name: "git", Description: "Git — used by `dbhelm remote` to sync a database's snapshot history"},
+	{Name: "git-lfs", Description: "Git LFS — used by `dbhelm remote` to track snapshot object content without bloating the repo"},
 }
 
 // Status is one dependency's detection result.
@@ -58,7 +58,7 @@ func Check() []Status {
 
 // CheckOptional detects every optional (feature-specific, not
 // core-blocking) dependency — currently git and git-lfs, needed only for
-// `mongobak remote`.
+// `dbhelm remote`.
 func CheckOptional() []Status {
 	out := make([]Status, len(Optional))
 	for i, d := range Optional {

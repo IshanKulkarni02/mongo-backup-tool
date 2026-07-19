@@ -5,7 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var snapDiffLive bool
@@ -14,8 +15,8 @@ var snapshotDiffCmd = &cobra.Command{
 	Use:   "diff <from> [to]",
 	Short: "Show what changed between two snapshots, or a snapshot and the live database",
 	Args:  cobra.RangeArgs(1, 2),
-	Example: `  mongobak snapshot diff abc123 def456 --connection local --db myapp
-  mongobak snapshot diff abc123 --connection local --db myapp --live`,
+	Example: `  dbhelm snapshot diff abc123 def456 --connection local --db myapp
+  dbhelm snapshot diff abc123 --connection local --db myapp --live`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConnAndDB(); err != nil {
 			return err
@@ -71,6 +72,15 @@ var snapshotDiffCmd = &cobra.Command{
 			conn, err := resolveConn(snapConn)
 			if err != nil {
 				return err
+			}
+			eng, err := engine.Lookup(conn.EngineID())
+			if err != nil {
+				return err
+			}
+			// ScanLive only speaks the Mongo wire protocol; comparing a SQL
+			// snapshot against its live database isn't implemented yet.
+			if eng.Capabilities().SQL {
+				return fmt.Errorf("--live diffing isn't supported for SQL connections yet — diff two snapshots instead")
 			}
 			live, err := snapshot.ScanLive(conn.URI, snapDB)
 			if err != nil {

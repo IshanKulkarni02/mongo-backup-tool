@@ -67,7 +67,7 @@ func Init(scope string) error {
 		// init.defaultBranch says otherwise). Push/Pull/Clone all default to
 		// "main" too (see cmd/remote.go's --branch flags); if the local
 		// repo's actual first branch ended up named something else, the
-		// very first `mongobak remote push` would fail outright with "src
+		// very first `dbhelm remote push` would fail outright with "src
 		// refspec main does not match any" before any content ever reached
 		// the remote.
 		if _, err := run(scope, git, "init", "-b", "main"); err != nil {
@@ -156,7 +156,7 @@ func Pull(scope, remoteName, branch string) error {
 // Clone clones an existing remote snapshot history into a scope directory,
 // checking out the given branch explicitly rather than relying on the
 // remote's default HEAD — a freshly created bare or remote repo may still
-// default to "master" (or have no default at all) even though mongobak
+// default to "master" (or have no default at all) even though dbhelm
 // always pushes to "main", which would otherwise clone an empty tree.
 //
 // git requires the target directory to not exist, or be genuinely empty —

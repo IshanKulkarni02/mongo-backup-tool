@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy } from "lucide-react";
+import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy, Download, Upload } from "lucide-react";
 import {
   ListConnections,
   TestConnection,
@@ -10,6 +10,11 @@ import {
   RunSQLExecute,
   GenerateMockData,
   GenerateAPISchema,
+  ExportQueryResultsCSV,
+  ExportQueryResultsJSON,
+  PickCSVFile,
+  ReadCSVHeader,
+  ImportCSV,
 } from "../../wailsjs/go/main/App";
 import { main, engine } from "../../wailsjs/go/models";
 import { Button } from "../components/Button";
@@ -22,10 +27,20 @@ import { useToast } from "../components/Toast";
 import { quoteIdent, sqlLiteral, buildSelectList } from "../lib/sql";
 import "./BrowserView.css";
 import "./TableView.css";
+import "./WebhookView.css"; // shares the mapping-row layout ImportCSVModal reuses
 
 const ROW_LIMIT = 100;
 
-export function TableView() {
+export function TableView({
+  initialTarget,
+  onConsumeInitialTarget,
+}: {
+  initialTarget?: { connection: string; database: string } | null;
+  onConsumeInitialTarget?: () => void;
+} = {}) {
+  // Captured once at mount so a parent clearing initialTarget afterwards
+  // (via onConsumeInitialTarget) doesn't affect this already-mounted view.
+  const [pendingTarget] = useState(initialTarget ?? null);
   const [connections, setConnections] = useState<main.ConnectionInfo[]>([]);
   const [connection, setConnection] = useState("");
   const [databases, setDatabases] = useState<string[]>([]);
@@ -38,8 +53,14 @@ export function TableView() {
     ListConnections().then((conns) => {
       const sqlConns = conns.filter((c) => c.capabilities?.sql);
       setConnections(sqlConns);
-      if (sqlConns.length > 0) setConnection(sqlConns[0].name);
+      if (pendingTarget && sqlConns.some((c) => c.name === pendingTarget.connection)) {
+        setConnection(pendingTarget.connection);
+      } else if (sqlConns.length > 0) {
+        setConnection(sqlConns[0].name);
+      }
+      onConsumeInitialTarget?.();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
@@ -51,7 +72,11 @@ export function TableView() {
     TestConnection(connection)
       .then((dbs) => {
         setDatabases(dbs);
-        if (dbs.length > 0) setDatabase(dbs[0]);
+        if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
+          setDatabase(pendingTarget.database);
+        } else if (dbs.length > 0) {
+          setDatabase(dbs[0]);
+        }
       })
       .catch((e) => toast.push("error", String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,6 +190,7 @@ function RowsPanel({
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [showMockAi, setShowMockAi] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const toast = useToast();
 
   const runQuery = useCallback(() => {
@@ -255,6 +281,31 @@ function RowsPanel({
         <Button variant="ghost" onClick={() => setShowExport(true)}>
           <FileCode size={14} /> Export schema
         </Button>
+        <Button
+          variant="ghost"
+          disabled={!result || result.rows.length === 0}
+          onClick={async () => {
+            if (!result) return;
+            const path = await ExportQueryResultsCSV(result, table);
+            if (path) toast.push("success", `Exported to ${path}`);
+          }}
+        >
+          <Download size={14} /> Export CSV
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!result || result.rows.length === 0}
+          onClick={async () => {
+            if (!result) return;
+            const path = await ExportQueryResultsJSON(result, table);
+            if (path) toast.push("success", `Exported to ${path}`);
+          }}
+        >
+          <Download size={14} /> Export JSON
+        </Button>
+        <Button variant="ghost" onClick={() => setShowImport(true)}>
+          <Upload size={14} /> Import CSV
+        </Button>
         {pkColumns.length !== 1 && (
           <span className="table-pk-hint">
             {pkColumns.length === 0 ? "No primary key detected — rows are read-only." : "Composite primary key — rows are read-only."}
@@ -315,6 +366,22 @@ function RowsPanel({
 
       {showExport && (
         <ExportSchemaModal connection={connection} database={database} table={table} onClose={() => setShowExport(false)} />
+      )}
+
+      {showImport && (
+        <ImportCSVModal
+          connection={connection}
+          database={database}
+          table={table}
+          engineId={engineId}
+          schema={schema}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            setShowImport(false);
+            runQuery();
+            onMutated();
+          }}
+        />
       )}
     </div>
   );
@@ -377,6 +444,134 @@ function ExportSchemaModal({
         </select>
       </div>
       {loading ? <Skeleton height={160} /> : <pre className="ai-output mono">{code}</pre>}
+    </Modal>
+  );
+}
+
+// ImportCSVModal reuses WebhookView's InsertPayloadModal pattern: pick a
+// source (a CSV file's header row here, instead of a webhook payload's
+// top-level keys), auto-match to table columns case-insensitively, and let
+// the user override per-column before running the real import.
+function ImportCSVModal({
+  connection,
+  database,
+  table,
+  engineId,
+  schema,
+  onClose,
+  onImported,
+}: {
+  connection: string;
+  database: string;
+  table: string;
+  engineId: string;
+  schema: engine.TableSchema | null;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [path, setPath] = useState("");
+  const [header, setHeader] = useState<string[]>([]);
+  const [hasHeaderRow, setHasHeaderRow] = useState(true);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  async function pickFile() {
+    const p = await PickCSVFile();
+    if (!p) return;
+    setPath(p);
+    setError("");
+    try {
+      const h = await ReadCSVHeader(p);
+      setHeader(h);
+      const nextMapping: Record<string, string> = {};
+      for (const col of schema?.columns ?? []) {
+        const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
+        if (match) nextMapping[col.name] = match;
+      }
+      setMapping(nextMapping);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function submit() {
+    if (Object.keys(mapping).length === 0) {
+      toast.push("error", "Map at least one column to a CSV field");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const n = await ImportCSV(connection, database, table, path, engineId, hasHeaderRow, mapping);
+      toast.push("success", `Imported ${n} row${n === 1 ? "" : "s"}`);
+      onImported();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Import CSV — ${table}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={busy || !path || Object.keys(mapping).length === 0}>
+            {busy ? "Importing..." : "Import"}
+          </Button>
+        </>
+      }
+    >
+      {error && <div className="query-error">{error}</div>}
+      <div className="field">
+        <Button variant="ghost" onClick={pickFile} disabled={busy}>
+          <Upload size={14} /> {path ? "Change file" : "Choose CSV file"}
+        </Button>
+        {path && <span className="mono webhook-addr">{path}</span>}
+      </div>
+      {path && (
+        <div className="field">
+          <label className="field-label">
+            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => setHasHeaderRow(e.target.checked)} /> First row is a
+            header
+          </label>
+        </div>
+      )}
+      {path && !hasHeaderRow && (
+        <div className="query-error">Uncheck only if the file has no header row — column mapping needs header names to match against.</div>
+      )}
+      {path && header.length > 0 && (
+        <div className="field">
+          <label className="field-label">Column mapping</label>
+          <div className="webhook-mapping-list">
+            {(schema?.columns ?? []).map((c) => (
+              <div key={c.name} className="webhook-mapping-row">
+                <span className="mono">{c.name}</span>
+                <span className="webhook-mapping-arrow">←</span>
+                <select
+                  className="input"
+                  value={mapping[c.name] ?? ""}
+                  onChange={(e) => setMapping((m) => ({ ...m, [c.name]: e.target.value }))}
+                >
+                  <option value="">(skip)</option>
+                  {header.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -7,9 +7,9 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/secrets"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 )
 
 // ConnectionInfo is a saved connection as shown to the frontend — its URI

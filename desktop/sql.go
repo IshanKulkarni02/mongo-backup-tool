@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/safeguard"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/safeguard"
 )
 
 // sqlSession acquires the cached SQL session for a connection. The caller
@@ -114,7 +115,10 @@ func (a *App) RunSQLQuery(connectionName, database, sqlText string) (engine.SQLR
 		return engine.SQLResult{}, err
 	}
 	defer release()
-	return sess.Query(context.Background(), database, sqlText)
+	start := time.Now()
+	result, err := sess.Query(context.Background(), database, sqlText)
+	recordQueryHistory(connectionName, database, sqlText, len(result.Rows), time.Since(start), err)
+	return result, err
 }
 
 // RunSQLQueryJob starts a query as a cancelable background job and returns
@@ -128,7 +132,10 @@ func (a *App) RunSQLQueryJob(connectionName, database, sqlText string) string {
 			return nil, err
 		}
 		defer release()
-		return sess.Query(ctx, database, sqlText)
+		start := time.Now()
+		result, err := sess.Query(ctx, database, sqlText)
+		recordQueryHistory(connectionName, database, sqlText, len(result.Rows), time.Since(start), err)
+		return result, err
 	})
 }
 
@@ -158,7 +165,10 @@ func (a *App) RunSQLExecute(connectionName, database, sqlText, confirmDatabaseNa
 		return 0, err
 	}
 	defer release()
-	return sess.Execute(context.Background(), database, sqlText)
+	start := time.Now()
+	rows, err := sess.Execute(context.Background(), database, sqlText)
+	recordQueryHistory(connectionName, database, sqlText, int(rows), time.Since(start), err)
+	return rows, err
 }
 
 // ExplainSQL returns the database's query-plan text for sqlText.

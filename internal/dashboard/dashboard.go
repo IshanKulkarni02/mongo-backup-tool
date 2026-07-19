@@ -45,7 +45,7 @@ type Widget struct {
 }
 
 // Store is the on-disk saved-query/widget catalog, stored as
-// dashboard.json in mongobak's config directory.
+// dashboard.json in dbhelm's config directory.
 type Store struct {
 	SavedQueries []SavedQuery `json:"savedQueries"`
 	Widgets      []Widget     `json:"widgets"`

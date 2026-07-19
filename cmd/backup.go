@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/humansize"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
+	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 var (
@@ -23,8 +23,8 @@ var (
 var backupCmd = &cobra.Command{
 	Use:   "backup",
 	Short: "Back up a database (or all databases) from a saved connection",
-	Example: `  mongobak backup --connection local --db myapp
-  mongobak backup --connection prod  # all databases`,
+	Example: `  dbhelm backup --connection local --db myapp
+  dbhelm backup --connection prod  # all databases`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := RunBackup(backupConn, backupDB)
 		if err != nil {
@@ -44,7 +44,7 @@ func RunBackup(connName, dbName string) (string, error) {
 	}
 	conn, ok := cfg.Find(connName)
 	if !ok {
-		return "", fmt.Errorf("no connection named %q (see: mongobak connection list)", connName)
+		return "", fmt.Errorf("no connection named %q (see: dbhelm connection list)", connName)
 	}
 
 	backupsDir, err := config.BackupsDir()

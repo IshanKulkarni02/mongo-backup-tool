@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var snapshotLogCmd = &cobra.Command{
@@ -21,7 +21,7 @@ var snapshotLogCmd = &cobra.Command{
 			return err
 		}
 		if len(summaries) == 0 {
-			fmt.Println(`No snapshots yet. Create one with: mongobak snapshot create --connection <name> --db <db> -m "message"`)
+			fmt.Println(`No snapshots yet. Create one with: dbhelm snapshot create --connection <name> --db <db> -m "message"`)
 			return nil
 		}
 		for i := len(summaries) - 1; i >= 0; i-- {

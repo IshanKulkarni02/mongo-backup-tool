@@ -1,4 +1,4 @@
-// Package config manages mongobak's persistent settings: saved connection
+// Package config manages dbhelm's persistent settings: saved connection
 // profiles and the on-disk location where backup archives live.
 package config
 
@@ -68,16 +68,17 @@ func (c *Connection) EngineID() string {
 
 // Config is the root of the persisted settings file.
 type Config struct {
-	Connections []Connection `json:"connections"`
-	AI          AISettings   `json:"ai,omitempty"`
+	Connections []Connection     `json:"connections"`
+	AI          AISettings       `json:"ai,omitempty"`
+	Launcher    LauncherSettings `json:"launcher,omitempty"`
 }
 
-// Dir returns mongobak's per-user config directory, creating it if needed.
+// Dir returns dbhelm's per-user config directory, creating it if needed.
 // It resolves to the OS-appropriate location (via os.UserConfigDir), e.g.
-// ~/Library/Application Support/mongobak on macOS, %AppData%\mongobak on
-// Windows, and ~/.config/mongobak on Linux.
+// ~/Library/Application Support/dbhelm on macOS, %AppData%\dbhelm on
+// Windows, and ~/.config/dbhelm on Linux.
 func Dir() (string, error) {
-	if override := os.Getenv("MONGOBAK_CONFIG_DIR"); override != "" {
+	if override := os.Getenv("DBHELM_CONFIG_DIR"); override != "" {
 		if err := os.MkdirAll(override, 0o755); err != nil {
 			return "", fmt.Errorf("creating config directory %s: %w", override, err)
 		}
@@ -91,11 +92,32 @@ func Dir() (string, error) {
 		}
 		base = home
 	}
-	dir := filepath.Join(base, "mongobak")
+	dir := filepath.Join(base, "dbhelm")
+	if err := migrateLegacyDir(base, dir); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("creating config directory %s: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// migrateLegacyDir copies settings from the pre-rebrand "mongobak" config
+// directory into the new "dbhelm" one, the first time the new directory
+// doesn't exist yet. The old directory is left in place as a safety net
+// rather than moved, so a rollback never loses data.
+func migrateLegacyDir(base, newDir string) error {
+	if _, err := os.Stat(newDir); err == nil {
+		return nil // already migrated, or never needed to be
+	}
+	oldDir := filepath.Join(base, "mongobak")
+	if _, err := os.Stat(oldDir); err != nil {
+		return nil // nothing to migrate
+	}
+	if err := os.CopyFS(newDir, os.DirFS(oldDir)); err != nil {
+		return fmt.Errorf("migrating config from %s to %s: %w", oldDir, newDir, err)
+	}
+	return nil
 }
 
 // BackupsDir returns the directory where backup archives and the backup

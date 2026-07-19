@@ -3,7 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -30,6 +30,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case depsInstallLineMsg:
 		m.depLog = append(m.depLog, msg.line)
+		return m, nil
+
+	case desktopAppResolvedMsg:
+		// m.resultBack was set by whichever screen dispatched
+		// chooseDesktopAppCmd (the first-run chooser vs. the main menu),
+		// so it's left as-is here rather than overwritten.
+		if msg.err != nil {
+			m.screen = screenResult
+			m.resultIsErr = true
+			m.resultLines = []string{msg.err.Error()}
+			return m, nil
+		}
+		if msg.launched {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		m.screen = screenResult
+		m.resultIsErr = false
+		m.resultLines = []string{"Opened the DBHelm download page in your browser."}
 		return m, nil
 
 	case depsInstallDoneMsg:

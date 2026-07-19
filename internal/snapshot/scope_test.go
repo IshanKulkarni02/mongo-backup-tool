@@ -100,5 +100,5 @@ func TestScopeDirMigratesLegacyDirectory(t *testing.T) {
 
 func configDirForTest(t *testing.T) (string, error) {
 	t.Helper()
-	return os.Getenv("MONGOBAK_CONFIG_DIR"), nil
+	return os.Getenv("DBHELM_CONFIG_DIR"), nil
 }

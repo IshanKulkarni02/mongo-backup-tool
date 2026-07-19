@@ -41,10 +41,16 @@ export function SnapshotsView() {
 
   useEffect(() => {
     ListConnections().then((conns) => {
-      setConnections(conns);
-      if (conns.length > 0) setConnection(conns[0].name);
+      const snapshotConns = conns.filter((c) => c.capabilities?.snapshots);
+      setConnections(snapshotConns);
+      if (snapshotConns.length > 0) setConnection(snapshotConns[0].name);
     });
   }, []);
+
+  // Comparing a snapshot against the live database only works for MongoDB
+  // connections (see openDiffScope in desktop/snapshots.go) — SQL snapshots
+  // can only be compared against each other for now.
+  const canCompareLive = connections.find((c) => c.name === connection)?.capabilities?.documents ?? false;
 
   useEffect(() => {
     if (!connection) return;
@@ -134,6 +140,7 @@ export function SnapshotsView() {
               to={compareTo}
               onFrom={setCompareFrom}
               onTo={setCompareTo}
+              allowLive={canCompareLive}
             />
           )}
 
@@ -235,12 +242,14 @@ function CompareBar({
   to,
   onFrom,
   onTo,
+  allowLive,
 }: {
   snapshots: snapshot.Summary[];
   from: string;
   to: string;
   onFrom: (v: string) => void;
   onTo: (v: string) => void;
+  allowLive: boolean;
 }) {
   return (
     <div className="compare-bar">
@@ -255,7 +264,7 @@ function CompareBar({
       </select>
       <span>vs.</span>
       <select className="input" value={to} onChange={(e) => onTo(e.target.value)}>
-        <option value="">Live database</option>
+        {allowLive && <option value="">Live database</option>}
         {snapshots.map((s) => (
           <option key={s.id} value={s.id}>
             {s.id.slice(0, 8)} — {s.createdAt}

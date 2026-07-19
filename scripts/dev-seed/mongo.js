@@ -3,10 +3,10 @@
 // embedding field, Geo Viewer via the location field).
 //
 // Usage:
-//   mongosh "mongodb://localhost:27017/mongobak_test" scripts/dev-seed/mongo.js
-//   mongobak connection add mongo-dev --uri "mongodb://localhost:27017"
+//   mongosh "mongodb://localhost:27017/dbhelm_test" scripts/dev-seed/mongo.js
+//   dbhelm connection add mongo-dev --uri "mongodb://localhost:27017"
 
-db = db.getSiblingDB("mongobak_test");
+db = db.getSiblingDB("dbhelm_test");
 
 db.users.drop();
 db.punches.drop();
@@ -57,4 +57,4 @@ db.punches.insertMany([
   },
 ]);
 
-print("Seeded mongobak_test: " + db.users.countDocuments() + " users, " + db.punches.countDocuments() + " punches");
+print("Seeded dbhelm_test: " + db.users.countDocuments() + " users, " + db.punches.countDocuments() + " punches");

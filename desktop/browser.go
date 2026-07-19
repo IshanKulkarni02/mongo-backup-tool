@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 // CollectionInfo is one collection's summary, shown in the browser's tree.

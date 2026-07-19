@@ -63,7 +63,7 @@ func withScopeLock(scope string, fn func() error) error {
 			continue // the stale lock is gone; retry acquiring immediately
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("this connection+database's snapshot index is already being updated by another mongobak operation — wait for it to finish and try again. If you're certain no other mongobak process is running (e.g. after a crash), delete the lock file manually and retry: %s", path)
+			return fmt.Errorf("this connection+database's snapshot index is already being updated by another dbhelm operation — wait for it to finish and try again. If you're certain no other dbhelm process is running (e.g. after a crash), delete the lock file manually and retry: %s", path)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

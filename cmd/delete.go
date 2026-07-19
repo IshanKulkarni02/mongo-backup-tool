@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 var deleteCmd = &cobra.Command{

@@ -23,6 +23,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
 import { JsonTree } from "../components/JsonTree";
+import { FriendlyDoc } from "../components/FriendlyDoc";
 import { useToast } from "../components/Toast";
 import "./BrowserView.css";
 
@@ -51,7 +52,16 @@ function extractID(docText: string): string | null {
 
 const PAGE_SIZE = 25;
 
-export function BrowserView() {
+export function BrowserView({
+  initialTarget,
+  onConsumeInitialTarget,
+}: {
+  initialTarget?: { connection: string; database: string } | null;
+  onConsumeInitialTarget?: () => void;
+} = {}) {
+  // Captured once at mount so a parent clearing initialTarget afterwards
+  // (via onConsumeInitialTarget) doesn't affect this already-mounted view.
+  const [pendingTarget] = useState(initialTarget ?? null);
   const [connections, setConnections] = useState<main.ConnectionInfo[]>([]);
   const [connection, setConnection] = useState("");
   const [databases, setDatabases] = useState<string[]>([]);
@@ -66,8 +76,14 @@ export function BrowserView() {
   useEffect(() => {
     ListConnections().then((conns) => {
       setConnections(conns);
-      if (conns.length > 0) setConnection(conns[0].name);
+      if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
+        setConnection(pendingTarget.connection);
+      } else if (conns.length > 0) {
+        setConnection(conns[0].name);
+      }
+      onConsumeInitialTarget?.();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -75,7 +91,12 @@ export function BrowserView() {
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
-      .then(setDatabases)
+      .then((dbs) => {
+        setDatabases(dbs);
+        if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
+          setDatabase(pendingTarget.database);
+        }
+      })
       .catch((e) => toast.push("error", String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
@@ -278,6 +299,7 @@ function DocumentsPanel({
   const [queryError, setQueryError] = useState("");
   const [editing, setEditing] = useState<{ text: string; isNew: boolean } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"friendly" | "json">("friendly");
   const toast = useToast();
 
   const runQuery = useCallback(() => {
@@ -363,11 +385,25 @@ function DocumentsPanel({
         <EmptyState icon={<Database size={28} />} title="No matching documents" />
       )}
 
+      {!loading && result && result.documents.length > 0 && (
+        <div className="doc-view-toggle">
+          <button
+            className={`tab-btn ${viewMode === "friendly" ? "active" : ""}`}
+            onClick={() => setViewMode("friendly")}
+          >
+            Simple
+          </button>
+          <button className={`tab-btn ${viewMode === "json" ? "active" : ""}`} onClick={() => setViewMode("json")}>
+            JSON
+          </button>
+        </div>
+      )}
+
       <div className="doc-list">
         {!loading &&
           result?.documents.map((doc, i) => (
             <Card key={i} className="doc-row">
-              <JsonTree json={doc} />
+              {viewMode === "friendly" ? <FriendlyDoc json={doc} /> : <JsonTree json={doc} />}
               <div className="doc-actions">
                 <Button variant="ghost" onClick={() => setEditing({ text: doc, isNew: false })}>
                   <Pencil size={14} />

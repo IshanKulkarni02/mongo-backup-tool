@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 // ListSnapshots returns a connection+database's snapshot history, newest first.
@@ -27,6 +28,25 @@ func (a *App) CreateSnapshot(connectionName, database, message string) (string, 
 	conn, err := a.resolveConn(connectionName)
 	if err != nil {
 		return "", err
+	}
+	eng, err := engine.Lookup(conn.EngineID())
+	if err != nil {
+		return "", err
+	}
+	if eng.Capabilities().SQL {
+		return a.jobs.run("snapshot-create", func() (any, error) {
+			sess, release, err := a.sqlSession(connectionName)
+			if err != nil {
+				return nil, err
+			}
+			defer release()
+			return snapshot.CreateSQL(context.Background(), snapshot.SQLCreateOptions{
+				Connection: connectionName,
+				Database:   database,
+				Message:    message,
+				Session:    sess,
+			})
+		}), nil
 	}
 	return a.jobs.run("snapshot-create", func() (any, error) {
 		res, err := snapshot.Create(snapshot.CreateOptions{
@@ -164,6 +184,14 @@ func (a *App) openDiffScope(connectionName, database, fromID, toID string) (from
 			scope.Close()
 			return nil, nil, nil, nil, cerr
 		}
+		// ScanLive only speaks the Mongo wire protocol; comparing a SQL
+		// snapshot against its live database isn't implemented yet, so
+		// fail clearly here rather than let ScanLive's mongo.Connect
+		// error on the URI scheme mismatch.
+		if eng, eerr := engine.Lookup(conn.EngineID()); eerr == nil && eng.Capabilities().SQL {
+			scope.Close()
+			return nil, nil, nil, nil, fmt.Errorf("comparing against the live database isn't supported for SQL connections yet — compare two snapshots instead")
+		}
 		live, err = snapshot.ScanLive(conn.URI, database)
 		if err != nil {
 			scope.Close()
@@ -208,6 +236,33 @@ func (a *App) RestoreSnapshot(connectionName, database, snapshotID string) (stri
 	conn, err := a.resolveConn(connectionName)
 	if err != nil {
 		return "", err
+	}
+	eng, err := engine.Lookup(conn.EngineID())
+	if err != nil {
+		return "", err
+	}
+	if eng.Capabilities().SQL {
+		return a.jobs.run("snapshot-restore", func() (any, error) {
+			sess, release, err := a.sqlSession(connectionName)
+			if err != nil {
+				return nil, err
+			}
+			defer release()
+			// RestoreSQLWithSafety's error message already says whether it
+			// auto-rolled back, so it's returned straight through below.
+			result, safety, _, err := snapshot.RestoreSQLWithSafety(context.Background(), snapshot.SQLRestoreOptions{
+				SourceConnection: connectionName,
+				SourceDatabase:   database,
+				SnapshotID:       snapshotID,
+				Session:          sess,
+				EngineID:         conn.EngineID(),
+				Drop:             true,
+			}, connectionName)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"result": result, "safetySnapshotId": safetyID(safety)}, nil
+		}), nil
 	}
 	return a.jobs.run("snapshot-restore", func() (any, error) {
 		// RestoreWithSafety's error message already says whether it

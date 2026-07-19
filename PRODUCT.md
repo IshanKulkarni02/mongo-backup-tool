@@ -6,11 +6,11 @@ product
 
 ## Users
 
-MongoDB developers, operators, and small teams working locally or with Atlas who need safe, frequent checkpoints, inspectable history, portable backups, and reliable recovery without maintaining separate tools for each workflow. They use mongobak from scripts, an interactive terminal, or a desktop manager while developing, migrating, debugging, and operating databases.
+MongoDB developers, operators, and small teams working locally or with Atlas who need safe, frequent checkpoints, inspectable history, portable backups, and reliable recovery without maintaining separate tools for each workflow. They use DBHelm from scripts, an interactive terminal, or a desktop manager while developing, migrating, debugging, and operating databases.
 
 ## Product Purpose
 
-mongobak is a cross-platform “Git for MongoDB” manager. It combines full-fidelity database-tool archives with content-addressed, deduplicated, diffable snapshots and exposes the same core behavior through CLI, TUI, and desktop interfaces. Success means users can understand what changed, create and restore checkpoints safely, browse and manage data at scale, automate retention and schedules, and move snapshot history through Git/LFS without hidden credential handling or unbounded resource use.
+DBHelm is a cross-platform “Git for MongoDB” manager. It combines full-fidelity database-tool archives with content-addressed, deduplicated, diffable snapshots and exposes the same core behavior through CLI, TUI, and desktop interfaces. Success means users can understand what changed, create and restore checkpoints safely, browse and manage data at scale, automate retention and schedules, and move snapshot history through Git/LFS without hidden credential handling or unbounded resource use.
 
 ## Brand Personality
 

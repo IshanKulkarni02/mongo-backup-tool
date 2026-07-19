@@ -36,7 +36,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../components/Toast";
 import "./DashboardView.css";
 
-const CHART_COLORS = ["#0066ff", "#1f8a4c", "#d33a2c", "#9a6b00", "#6b46c1", "#0e7490"];
+const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 
 type ChartType = "bar" | "line" | "scatter" | "pie";
 

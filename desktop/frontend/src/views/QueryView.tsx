@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { sql as sqlLang } from "@codemirror/lang-sql";
-import { Database, Play, Square, Wand2, Sparkles, Wrench, Save } from "lucide-react";
+import { Database, Play, Square, Wand2, Sparkles, Wrench, Save, History, Download } from "lucide-react";
 import {
   ListConnections,
   TestConnection,
@@ -15,8 +15,12 @@ import {
   FixSQLError,
   CancelJob,
   SaveQuery,
+  ListQueryHistory,
+  ClearQueryHistory,
+  ExportQueryResultsCSV,
+  ExportQueryResultsJSON,
 } from "../../wailsjs/go/main/App";
-import { main, engine, safeguard } from "../../wailsjs/go/models";
+import { main, engine, safeguard, queryhistory } from "../../wailsjs/go/models";
 import { useJobUpdates, Job } from "../hooks/useJobs";
 import { Button } from "../components/Button";
 import { Modal } from "../components/Modal";
@@ -57,6 +61,8 @@ export function QueryView() {
   const [pending, setPending] = useState<{ sql: string; classification: safeguard.Classification } | null>(null);
   const [aiMode, setAiMode] = useState<"generate" | "fix" | "explain" | null>(null);
   const [showSave, setShowSave] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<queryhistory.Entry[]>([]);
   const toast = useToast();
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
@@ -95,10 +101,20 @@ export function QueryView() {
         setQueryError(job.message ?? "Query failed");
         setResult(null);
       }
+      refreshHistory();
     },
     [jobId]
   );
   useJobUpdates(onJobUpdate);
+
+  const refreshHistory = useCallback(() => {
+    if (!connection) return;
+    ListQueryHistory(connection, 20).then(setHistory);
+  }, [connection]);
+
+  useEffect(() => {
+    if (showHistory) refreshHistory();
+  }, [showHistory, refreshHistory]);
 
   function runQuery() {
     setRunning(true);
@@ -120,6 +136,7 @@ export function QueryView() {
       setQueryError(String(e));
     } finally {
       setRunning(false);
+      refreshHistory();
     }
   }
 
@@ -234,7 +251,24 @@ export function QueryView() {
             <Button variant="ghost" onClick={() => setShowSave(true)} disabled={!connection || !database || !sqlText.trim()}>
               <Save size={14} /> Save query
             </Button>
+            <Button variant="ghost" onClick={() => setShowHistory((v) => !v)} disabled={!connection}>
+              <History size={14} /> History
+            </Button>
           </div>
+
+          {showHistory && (
+            <QueryHistoryPanel
+              entries={history}
+              onRerun={(sql) => {
+                setSqlText(sql);
+                setShowHistory(false);
+              }}
+              onClear={async () => {
+                await ClearQueryHistory();
+                refreshHistory();
+              }}
+            />
+          )}
 
           {queryError && <div className="query-error">{queryError}</div>}
           {running && <Skeleton height={120} />}
@@ -251,7 +285,31 @@ export function QueryView() {
           )}
 
           {!running && result && result.rows.length === 0 && !queryError && <EmptyState icon={<Database size={28} />} title="No rows" />}
-          {!running && result && result.rows.length > 0 && <DataGrid columns={result.columns} rows={result.rows} />}
+          {!running && result && result.rows.length > 0 && (
+            <>
+              <div className="export-bar">
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    const path = await ExportQueryResultsCSV(result, `${database || "query"}-results`);
+                    if (path) toast.push("success", `Exported to ${path}`);
+                  }}
+                >
+                  <Download size={14} /> Export CSV
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    const path = await ExportQueryResultsJSON(result, `${database || "query"}-results`);
+                    if (path) toast.push("success", `Exported to ${path}`);
+                  }}
+                >
+                  <Download size={14} /> Export JSON
+                </Button>
+              </div>
+              <DataGrid columns={result.columns} rows={result.rows} />
+            </>
+          )}
         </>
       )}
 
@@ -331,6 +389,45 @@ export function QueryView() {
           sqlText={sqlText}
           onClose={() => setShowSave(false)}
         />
+      )}
+    </div>
+  );
+}
+
+function QueryHistoryPanel({
+  entries,
+  onRerun,
+  onClear,
+}: {
+  entries: queryhistory.Entry[];
+  onRerun: (sql: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="history-panel">
+      <div className="history-panel-header">
+        <span className="history-meta">Recent queries on this connection</span>
+        <Button variant="ghost" onClick={onClear} disabled={entries.length === 0}>
+          Clear history
+        </Button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="history-empty">No queries run yet.</div>
+      ) : (
+        entries.map((e) => (
+          <div key={e.id} className="history-row">
+            <div className="history-row-main">
+              <div className="history-sql mono">{e.sqlText}</div>
+              <div className={`history-meta ${e.success ? "" : "history-meta-error"}`}>
+                <span>{new Date(e.ranAt).toLocaleString()}</span>
+                <span>{e.success ? `${e.rowCount} row${e.rowCount === 1 ? "" : "s"} · ${e.durationMs}ms` : e.errorMessage}</span>
+              </div>
+            </div>
+            <Button variant="ghost" onClick={() => onRerun(e.sqlText)}>
+              <Play size={14} /> Run again
+            </Button>
+          </div>
+        ))
       )}
     </div>
   );

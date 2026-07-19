@@ -14,7 +14,7 @@ import (
 )
 
 // service namespaces every entry this tool writes into the OS store.
-const service = "mongobak"
+const service = "dbhelm"
 
 // ErrNotFound is returned by Get when no secret exists under the key.
 var ErrNotFound = errors.New("secret not found")
@@ -34,7 +34,7 @@ var (
 // the process lifetime.
 func Available() bool {
 	probeOnce.Do(func() {
-		const probeKey = "mongobak-keyring-probe"
+		const probeKey = "dbhelm-keyring-probe"
 		if err := keyring.Set(service, probeKey, "ok"); err != nil {
 			return
 		}

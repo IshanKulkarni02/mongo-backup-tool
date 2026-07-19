@@ -24,14 +24,22 @@ type IndexSpec struct {
 	Options bson.M `json:"options,omitempty"`
 }
 
-// CollectionManifest is one collection's state within a snapshot. The
-// document list itself (which can be huge) is NOT embedded here — it's
-// stored separately via Backend.WriteDocRefs/IterDocRefs in sorted, chunked
-// form, so loading a manifest to inspect its metadata never pulls a
-// multi-million-entry list into memory.
+// CollectionManifest is one collection's (or SQL table's) state within a
+// snapshot. The row/document list itself (which can be huge) is NOT
+// embedded here — it's stored separately via Backend.WriteDocRefs/
+// IterDocRefs in sorted, chunked form, so loading a manifest to inspect its
+// metadata never pulls a multi-million-entry list into memory.
 type CollectionManifest struct {
-	Indexes  []IndexSpec `json:"indexes,omitempty"`
+	Indexes  []IndexSpec `json:"indexes,omitempty"` // Mongo only
 	DocCount int         `json:"docCount"`
+	// PrimaryKey and IndexDDL are SQL-only, additive fields — an existing
+	// on-disk Mongo manifest simply has them empty/omitted, no migration
+	// needed. PrimaryKey is the ordered PK column list captured at
+	// snapshot time (a table's row identity is derived from it); IndexDDL
+	// is each non-PK/UNIQUE-constraint index's literal, replayable CREATE
+	// INDEX text (engine.IndexDef.DDL) captured at snapshot time.
+	PrimaryKey []string `json:"primaryKey,omitempty"`
+	IndexDDL   []string `json:"indexDdl,omitempty"`
 }
 
 // Manifest is a full snapshot: one point-in-time record of every collection,

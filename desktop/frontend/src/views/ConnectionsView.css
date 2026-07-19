@@ -10,9 +10,9 @@
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   padding: var(--space-2);
-  color: #9a6b00;
+  color: var(--color-warning);
   background: var(--color-bg-subtle);
-  border: 1px solid #9a6b00;
+  border: 1px solid var(--color-warning);
   border-radius: var(--radius-sm);
   font-size: var(--text-label);
 }
@@ -61,8 +61,8 @@
 }
 
 .conn-env-staging {
-  color: #9a6b00;
-  border-color: #9a6b00;
+  color: var(--color-warning);
+  border-color: var(--color-warning);
 }
 
 .conn-env-dev {
@@ -136,6 +136,17 @@
   border-radius: var(--radius-sm);
   padding: 2px var(--space-1);
   font-size: var(--text-label);
+  cursor: pointer;
+  color: inherit;
+}
+
+.conn-db-chip:hover:not(:disabled) {
+  background: var(--color-border);
+  border-color: var(--color-border-strong);
+}
+
+.conn-db-chip:disabled {
+  cursor: default;
 }
 
 .conn-actions {

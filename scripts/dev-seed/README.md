@@ -12,8 +12,8 @@ end, and for the optional Postgres/MySQL integration suite
 docker compose -f docker-compose.test.yml up -d
 
 # Load sample data
-psql "postgres://mongobak:mongobak@localhost:55432/mongobak_test" -f scripts/dev-seed/postgres.sql
-mysql -h 127.0.0.1 -P 53306 -u mongobak -pmongobak mongobak_test < scripts/dev-seed/mysql.sql
+psql "postgres://dbhelm:dbhelm@localhost:55432/dbhelm_test" -f scripts/dev-seed/postgres.sql
+mysql -h 127.0.0.1 -P 53306 -u dbhelm -pdbhelm dbhelm_test < scripts/dev-seed/mysql.sql
 
 # Run the optional integration suite against them
 go test -tags=integration ./internal/engine/postgres/... ./internal/engine/mysql/...
@@ -33,7 +33,7 @@ the automatic `ST_AsGeoJSON` wrapping in Tables.
 ## MongoDB
 
 ```bash
-mongosh "mongodb://localhost:27017/mongobak_test" scripts/dev-seed/mongo.js
+mongosh "mongodb://localhost:27017/dbhelm_test" scripts/dev-seed/mongo.js
 ```
 
 Seeds a `users` collection with a toy embedding field (for Vector Compare)

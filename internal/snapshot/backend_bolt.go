@@ -36,7 +36,7 @@ func newBoltBackend(scope string) (*boltBackend, error) {
 	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: boltOpenTimeout})
 	if err != nil {
 		if errors.Is(err, bolt.ErrTimeout) {
-			return nil, fmt.Errorf("this connection+database's snapshot store is already in use by another mongobak operation (snapshot, diff, restore, or gc) — wait for it to finish and try again: %s", path)
+			return nil, fmt.Errorf("this connection+database's snapshot store is already in use by another dbhelm operation (snapshot, diff, restore, or gc) — wait for it to finish and try again: %s", path)
 		}
 		return nil, fmt.Errorf("opening snapshot store %s: %w", path, err)
 	}

@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/ai"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/ai"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 // aiRequestTimeout bounds a single AI completion so a stalled provider

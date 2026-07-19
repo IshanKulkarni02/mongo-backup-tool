@@ -7,9 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/dashboard"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/dashboard"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 func dashboardStore() (*dashboard.Store, error) {

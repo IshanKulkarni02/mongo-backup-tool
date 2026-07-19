@@ -1,5 +1,5 @@
 // Package scheduler runs recurring snapshot/backup jobs on a fixed
-// interval, so mongobak doesn't depend on the OS's cron/Task Scheduler for
+// interval, so dbhelm doesn't depend on the OS's cron/Task Scheduler for
 // routine use. Schedules use a plain duration ("1h", "24h", "15m") rather
 // than cron-expression syntax — deliberately simpler than a full cron
 // parser, and it covers the common cases (hourly/daily/weekly) without the
@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
 )
 
 // Action is what a schedule does when it fires.

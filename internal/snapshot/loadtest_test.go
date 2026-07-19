@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/testmongod"
+	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
 
 // TestLoadOneMillionDocuments is the Phase-1-style release gate: seed 1M
@@ -24,10 +24,10 @@ import (
 // it's slow (real I/O against a real mongod, ~1M documents) and gated behind
 // an explicit env var so `go test ./...` stays fast by default:
 //
-//	MONGOBAK_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v -timeout 20m
+//	DBHELM_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v -timeout 20m
 func TestLoadOneMillionDocuments(t *testing.T) {
-	if os.Getenv("MONGOBAK_LOAD_TEST") == "" {
-		t.Skip("set MONGOBAK_LOAD_TEST=1 to run the 1M-document load test (slow; requires mongod)")
+	if os.Getenv("DBHELM_LOAD_TEST") == "" {
+		t.Skip("set DBHELM_LOAD_TEST=1 to run the 1M-document load test (slow; requires mongod)")
 	}
 	withTestScope(t)
 	uri := testmongod.Start(t, "rs0")

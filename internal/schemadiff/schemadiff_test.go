@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 func col(name, dataType string, nullable, pk bool) engine.Column {

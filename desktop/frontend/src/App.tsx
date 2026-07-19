@@ -13,11 +13,15 @@ import {
   GitCompareArrows,
   Map,
   Radio,
+  Cloud,
+  Network,
+  Search,
 } from "lucide-react";
 import "./App.css";
 import { ToastProvider, useToast } from "./components/Toast";
 import { useJobUpdates, Job } from "./hooks/useJobs";
 import { DependencyModal } from "./components/DependencyModal";
+import { CommandPalette, type CommandPaletteItem } from "./components/CommandPalette";
 import { Skeleton } from "./components/Skeleton";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { SnapshotsView } from "./views/SnapshotsView";
@@ -27,6 +31,7 @@ import { TableView } from "./views/TableView";
 import { VectorToolView } from "./views/VectorToolView";
 import { WebhookView } from "./views/WebhookView";
 import { ListConnections } from "../wailsjs/go/main/App";
+import { main } from "../wailsjs/go/models";
 
 // Lazy-loaded: each of these pulls in a heavy standalone dependency
 // (CodeMirror, Recharts, React Flow, Leaflet) that only needs to be
@@ -39,6 +44,9 @@ const SchemaDiffView = lazy(() => import("./views/SchemaDiffView").then((m) => (
 const AISettingsView = lazy(() => import("./views/AISettingsView").then((m) => ({ default: m.AISettingsView })));
 const GeoView = lazy(() => import("./views/GeoView").then((m) => ({ default: m.GeoView })));
 const RulesView = lazy(() => import("./views/RulesView").then((m) => ({ default: m.RulesView })));
+const RemoteSyncView = lazy(() => import("./views/RemoteSyncView").then((m) => ({ default: m.RemoteSyncView })));
+const ERDiagramView = lazy(() => import("./views/ERDiagramView").then((m) => ({ default: m.ERDiagramView })));
+const CrossSearchView = lazy(() => import("./views/CrossSearchView").then((m) => ({ default: m.CrossSearchView })));
 
 function ViewSuspense({ children }: PropsWithChildren) {
   return <Suspense fallback={<Skeleton height={320} />}>{children}</Suspense>;
@@ -58,7 +66,10 @@ type View =
   | "rules"
   | "webhook"
   | "snapshots"
-  | "backups";
+  | "backups"
+  | "remotesync"
+  | "erdiagram"
+  | "crosssearch";
 
 // requires gates a nav item on at least one saved connection whose actual
 // engine.Caps report that capability — not on the connection's engine
@@ -72,9 +83,11 @@ const NAV: { id: View; label: string; icon: typeof Database; requires?: CapKey }
   { id: "connections", label: "Connections", icon: Database },
   { id: "browser", label: "Browser", icon: Table2, requires: "documents" },
   { id: "tables", label: "Tables", icon: Grid3x3, requires: "sql" },
+  { id: "erdiagram", label: "ER Diagram", icon: Network, requires: "sql" },
   { id: "query", label: "Query", icon: Terminal, requires: "sql" },
   { id: "pipeline", label: "Pipeline", icon: Workflow, requires: "aggregation" },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "crosssearch", label: "Cross-Database Search", icon: Search },
   { id: "schemadiff", label: "Schema Diff", icon: GitCompare, requires: "sql" },
   { id: "ai", label: "AI", icon: Sparkles },
   { id: "vector", label: "Vector Compare", icon: GitCompareArrows },
@@ -83,6 +96,7 @@ const NAV: { id: View; label: string; icon: typeof Database; requires?: CapKey }
   { id: "webhook", label: "Webhook Listener", icon: Radio },
   { id: "snapshots", label: "Snapshots", icon: GitBranch, requires: "snapshots" },
   { id: "backups", label: "Backups", icon: Archive, requires: "snapshots" },
+  { id: "remotesync", label: "Remote Sync", icon: Cloud, requires: "snapshots" },
 ];
 
 // Job types whose completion is already surfaced inline by their own view
@@ -98,13 +112,31 @@ const JOB_LABELS: Record<string, string> = {
   "backup-restore": "Backup restored",
 };
 
+// Set by clicking a database chip in ConnectionsView, consumed once by
+// BrowserView/TableView on mount to preselect that connection+database,
+// then cleared so a later manual nav click doesn't jump back to it.
+type OpenTarget = { connection: string; database: string } | null;
+
 function AppShell() {
   const [view, setView] = useState<View>("connections");
   const [depsResolved, setDepsResolved] = useState(false);
   const [availableCaps, setAvailableCaps] = useState<Set<CapKey>>(
     new Set(["sql", "documents", "aggregation", "snapshots"])
   );
+  const [openTarget, setOpenTarget] = useState<OpenTarget>(null);
   const toast = useToast();
+
+  // Documents-capable connections (Mongo) open in Browser, SQL-capable ones
+  // open in Tables — mirrors the capability-gated NAV entries above.
+  const handleOpenDatabase = useCallback((conn: main.ConnectionInfo, database: string) => {
+    if (conn.capabilities?.documents) {
+      setOpenTarget({ connection: conn.name, database });
+      setView("browser");
+    } else if (conn.capabilities?.sql) {
+      setOpenTarget({ connection: conn.name, database });
+      setView("tables");
+    }
+  }, []);
 
   const onJobUpdate = useCallback(
     (job: Job) => {
@@ -142,6 +174,13 @@ function AppShell() {
 
   const visibleNav = NAV.filter((item) => !item.requires || availableCaps.has(item.requires));
 
+  const paletteItems: CommandPaletteItem[] = visibleNav.map((item) => ({
+    id: item.id,
+    label: item.label,
+    icon: item.icon,
+    onSelect: () => setView(item.id),
+  }));
+
   // If the currently active view just got hidden (its last connection was
   // removed), fall back to Connections rather than showing a blank pane.
   useEffect(() => {
@@ -154,7 +193,7 @@ function AppShell() {
   return (
     <div className="shell">
       <nav className="sidebar">
-        <div className="sidebar-title">mongobak</div>
+        <div className="sidebar-title">DBHelm</div>
         {visibleNav.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -167,9 +206,13 @@ function AppShell() {
         ))}
       </nav>
       <main className="main">
-        {view === "connections" && <ConnectionsView />}
-        {view === "browser" && <BrowserView />}
-        {view === "tables" && <TableView />}
+        {view === "connections" && <ConnectionsView onOpenDatabase={handleOpenDatabase} />}
+        {view === "browser" && (
+          <BrowserView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
+        )}
+        {view === "tables" && (
+          <TableView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
+        )}
         {view === "query" && (
           <ViewSuspense>
             <QueryView />
@@ -209,8 +252,24 @@ function AppShell() {
         {view === "webhook" && <WebhookView />}
         {view === "snapshots" && <SnapshotsView />}
         {view === "backups" && <BackupsView />}
+        {view === "remotesync" && (
+          <ViewSuspense>
+            <RemoteSyncView />
+          </ViewSuspense>
+        )}
+        {view === "erdiagram" && (
+          <ViewSuspense>
+            <ERDiagramView />
+          </ViewSuspense>
+        )}
+        {view === "crosssearch" && (
+          <ViewSuspense>
+            <CrossSearchView />
+          </ViewSuspense>
+        )}
       </main>
       {!depsResolved && <DependencyModal onResolved={() => setDepsResolved(true)} />}
+      <CommandPalette items={paletteItems} />
     </div>
   );
 }

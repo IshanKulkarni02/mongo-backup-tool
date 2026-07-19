@@ -9,18 +9,19 @@ package mysql
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 func testURI() string {
-	if v := os.Getenv("MONGOBAK_TEST_MYSQL_URI"); v != "" {
+	if v := os.Getenv("DBHELM_TEST_MYSQL_URI"); v != "" {
 		return v
 	}
-	return "mongobak:mongobak@tcp(127.0.0.1:53306)/mongobak_test"
+	return "dbhelm:dbhelm@tcp(127.0.0.1:53306)/dbhelm_test"
 }
 
 func openTestSession(t *testing.T) engine.SQLSession {
@@ -46,7 +47,7 @@ func mustExec(t *testing.T, s engine.SQLSession, database, sqlText string) {
 func TestIntegrationMySQLIntrospectionAndQuery(t *testing.T) {
 	s := openTestSession(t)
 	ctx := context.Background()
-	const db = "mongobak_test"
+	const db = "dbhelm_test"
 
 	mustExec(t, s, db, `DROP TABLE IF EXISTS it_orders`)
 	mustExec(t, s, db, `DROP TABLE IF EXISTS it_users`)
@@ -123,5 +124,73 @@ func TestIntegrationMySQLIntrospectionAndQuery(t *testing.T) {
 	}
 	if plan == "" {
 		t.Fatal("expected non-empty EXPLAIN output")
+	}
+}
+
+func TestIntegrationMySQLCompositePrimaryKeyAndIndexes(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const db = "dbhelm_test"
+
+	mustExec(t, s, db, `DROP TABLE IF EXISTS it_membership`)
+	t.Cleanup(func() { mustExec(t, s, db, `DROP TABLE IF EXISTS it_membership`) })
+
+	mustExec(t, s, db, `CREATE TABLE it_membership (org_id INT, user_id INT, role VARCHAR(50), PRIMARY KEY (user_id, org_id))`)
+	mustExec(t, s, db, `CREATE INDEX it_membership_role_idx ON it_membership (role)`)
+
+	schema, err := s.TableSchema(ctx, db, "it_membership")
+	if err != nil {
+		t.Fatalf("TableSchema: %v", err)
+	}
+	if len(schema.PrimaryKey) != 2 || schema.PrimaryKey[0] != "user_id" || schema.PrimaryKey[1] != "org_id" {
+		t.Fatalf("expected composite PK [user_id org_id] in declared order, got %v", schema.PrimaryKey)
+	}
+
+	indexes, err := s.ListTableIndexes(ctx, db, "it_membership")
+	if err != nil {
+		t.Fatalf("ListTableIndexes: %v", err)
+	}
+	if len(indexes) != 1 || indexes[0].Name != "it_membership_role_idx" {
+		t.Fatalf("expected exactly the explicit role index (PRIMARY excluded), got %+v", indexes)
+	}
+}
+
+func TestIntegrationMySQLBeginConsistentReadStreamsAllRowsIncludingBinary(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const db = "dbhelm_test"
+
+	mustExec(t, s, db, `DROP TABLE IF EXISTS it_files`)
+	t.Cleanup(func() { mustExec(t, s, db, `DROP TABLE IF EXISTS it_files`) })
+	mustExec(t, s, db, `CREATE TABLE it_files (id INT AUTO_INCREMENT PRIMARY KEY, data BLOB)`)
+
+	blob := []byte{0x00, 0x01, 0xFF, 0xFE, 'h', 'i'}
+	for i := 0; i < 600; i++ { // exceeds sqlbase.QueryRowCap, unlike Query
+		mustExec(t, s, db, fmt.Sprintf(`INSERT INTO it_files (data) VALUES (X'%x')`, blob))
+	}
+
+	tx, err := s.BeginConsistentRead(ctx)
+	if err != nil {
+		t.Fatalf("BeginConsistentRead: %v", err)
+	}
+	defer tx.Close(ctx)
+
+	var rowCount int
+	var sawBinary bool
+	err = tx.StreamRows(ctx, db, "it_files", func(row map[string]any) error {
+		rowCount++
+		if b, ok := row["data"].([]byte); ok && string(b) == string(blob) {
+			sawBinary = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamRows: %v", err)
+	}
+	if rowCount != 600 {
+		t.Fatalf("expected all 600 rows streamed (no cap), got %d", rowCount)
+	}
+	if !sawBinary {
+		t.Fatal("expected a row's BLOB column to round-trip as real []byte matching the inserted blob")
 	}
 }

@@ -9,12 +9,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/sqlbase"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/sqlbase"
 )
 
 func init() {
@@ -28,7 +29,7 @@ type Engine struct{}
 func (Engine) ID() string { return "sqlite" }
 
 func (Engine) Capabilities() engine.Caps {
-	return engine.Caps{SQL: true, ForeignKeys: true}
+	return engine.Caps{SQL: true, ForeignKeys: true, Snapshots: true}
 }
 
 // Open treats cfg.URI as a file path (or ":memory:"/"file::memory:?..."
@@ -148,8 +149,16 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 	if err != nil {
 		return engine.TableSchema{}, err
 	}
+	type pkCol struct {
+		name    string
+		ordinal int
+	}
+	var pkCols []pkCol
 	for colRows.Next() {
-		// cid, name, type, notnull, dflt_value, pk
+		// cid, name, type, notnull, dflt_value, pk — pk is already a
+		// 1-based ordinal for composite keys (0 = not part of the PK),
+		// unlike Postgres/MySQL's introspection which needed a second
+		// query to recover ordinal position.
 		var cid int
 		var name, ctype string
 		var notNull, pk int
@@ -161,12 +170,19 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 		out.Columns = append(out.Columns, engine.Column{
 			Name: name, DataType: ctype, Nullable: notNull == 0, IsPK: pk > 0,
 		})
+		if pk > 0 {
+			pkCols = append(pkCols, pkCol{name: name, ordinal: pk})
+		}
 	}
 	if err := colRows.Err(); err != nil {
 		colRows.Close()
 		return engine.TableSchema{}, err
 	}
 	colRows.Close()
+	sort.Slice(pkCols, func(i, j int) bool { return pkCols[i].ordinal < pkCols[j].ordinal })
+	for _, pc := range pkCols {
+		out.PrimaryKey = append(out.PrimaryKey, pc.name)
+	}
 
 	fkRows, err := s.db.QueryContext(ctx, fmt.Sprintf(`PRAGMA foreign_key_list("%s")`, escapeIdent(table)))
 	if err != nil {
@@ -203,4 +219,54 @@ func (s *Session) Explain(ctx context.Context, database, sqlText string) (string
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	return sqlbase.FormatExplainRows(ctx, s.db, "EXPLAIN QUERY PLAN "+sqlText)
+}
+
+// ListTableIndexes returns the table's indexes as their literal, already-
+// stored CREATE INDEX text (sqlite_master.sql). Auto-indexes SQLite
+// creates implicitly to back a PRIMARY KEY/UNIQUE constraint have a NULL
+// sql column and are correctly excluded — restore assumes the target
+// table (and therefore its own declared constraints) already exists.
+func (s *Session) ListTableIndexes(ctx context.Context, database, table string) ([]engine.IndexDef, error) {
+	ctx, cancel := opCtx(ctx)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL ORDER BY name`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []engine.IndexDef
+	for rows.Next() {
+		var d engine.IndexDef
+		if err := rows.Scan(&d.Name, &d.DDL); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// BeginConsistentRead opens a read-only transaction. SQLite's connection
+// pool is already capped at 1 (see Open) so this transaction has exclusive
+// use of the only connection for its lifetime — trivially a consistent
+// point-in-time view without needing an isolation level to request.
+func (s *Session) BeginConsistentRead(ctx context.Context) (engine.ConsistentReadTx, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	return &readTx{tx: tx}, nil
+}
+
+type readTx struct {
+	tx *sql.Tx
+}
+
+func (r *readTx) StreamRows(ctx context.Context, database, table string, onRow func(row map[string]any) error) error {
+	sqlText := fmt.Sprintf(`SELECT * FROM "%s"`, escapeIdent(table))
+	return sqlbase.StreamRows(ctx, r.tx, sqlText, onRow)
+}
+
+// Close rolls back rather than commits — read-only, nothing to persist.
+func (r *readTx) Close(ctx context.Context) error {
+	return r.tx.Rollback()
 }

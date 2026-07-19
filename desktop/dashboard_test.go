@@ -4,7 +4,7 @@ import "testing"
 
 func withTempConfigDir(t *testing.T) {
 	t.Helper()
-	t.Setenv("MONGOBAK_CONFIG_DIR", t.TempDir())
+	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
 }
 
 func TestSaveAndListQuery(t *testing.T) {

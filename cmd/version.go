@@ -8,9 +8,9 @@ import (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print mongobak's version",
+	Short: "Print dbhelm's version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("mongobak", version)
+		fmt.Println("dbhelm", version)
 	},
 }
 

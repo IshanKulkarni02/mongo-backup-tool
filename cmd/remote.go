@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/remote"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/remote"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var remoteCmd = &cobra.Command{
@@ -33,8 +33,8 @@ var remoteInitName string
 var remoteInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize Git + Git LFS for a database's snapshot store",
-	Example: `  mongobak remote init --connection local --db myapp
-  mongobak remote init --connection local --db myapp --url git@github.com:me/myapp-snapshots.git`,
+	Example: `  dbhelm remote init --connection local --db myapp
+  dbhelm remote init --connection local --db myapp --url git@github.com:me/myapp-snapshots.git`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConnAndDB(); err != nil {
 			return err
@@ -78,11 +78,11 @@ var remotePushCmd = &cobra.Command{
 			return err
 		}
 		if !remote.IsInitialized(scopeDir) {
-			return fmt.Errorf("not a git remote-sync scope yet — run: mongobak remote init --connection %s --db %s", snapConn, snapDB)
+			return fmt.Errorf("not a git remote-sync scope yet — run: dbhelm remote init --connection %s --db %s", snapConn, snapDB)
 		}
 		msg := remotePushMessage
 		if msg == "" {
-			msg = "mongobak sync"
+			msg = "dbhelm sync"
 		}
 		if err := remote.Push(scopeDir, remotePushRemote, remotePushBranch, msg); err != nil {
 			return err
@@ -107,7 +107,7 @@ var remotePullCmd = &cobra.Command{
 			return err
 		}
 		if !remote.IsInitialized(scopeDir) {
-			return fmt.Errorf("not a git remote-sync scope yet — run: mongobak remote init --connection %s --db %s", snapConn, snapDB)
+			return fmt.Errorf("not a git remote-sync scope yet — run: dbhelm remote init --connection %s --db %s", snapConn, snapDB)
 		}
 		if err := remote.Pull(scopeDir, remotePullRemote, remotePullBranch); err != nil {
 			return err
@@ -123,7 +123,7 @@ var remoteCloneCmd = &cobra.Command{
 	Use:     "clone <git-url>",
 	Short:   "Clone an existing remote snapshot history for a connection+database",
 	Args:    cobra.ExactArgs(1),
-	Example: `  mongobak remote clone git@github.com:me/myapp-snapshots.git --connection local --db myapp`,
+	Example: `  dbhelm remote clone git@github.com:me/myapp-snapshots.git --connection local --db myapp`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConnAndDB(); err != nil {
 			return err

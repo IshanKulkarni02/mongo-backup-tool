@@ -28,6 +28,10 @@ type CreateOptions struct {
 type CreateResult struct {
 	Summary    Summary
 	Consistent bool // true if readConcern:snapshot was used (replica set); false if degraded to a plain scan
+	// SkippedTables lists SQL tables that had no primary key and so
+	// couldn't be snapshotted (see scanSQLDatabase) — always empty for a
+	// Mongo Create, since every document has an _id.
+	SkippedTables []string `json:"skippedTables,omitempty"`
 }
 
 // Create scans a live database and stores a new snapshot of it, deduping

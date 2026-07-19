@@ -41,9 +41,15 @@ function buildGraph(rule: { conditions: ConditionGroup; event?: { type?: string;
   const LEAF_GAP = 260;
   const ROW_HEIGHT = 110;
 
-  const groupStyle = { background: "#eef2ff", border: "1px solid #6366f1", borderRadius: 8, padding: 8, fontWeight: 700 };
-  const leafStyle = { background: "#f0fdf4", border: "1px solid #22c55e", borderRadius: 8, padding: 8, fontSize: 12 };
-  const eventStyle = { background: "#fef2f2", border: "1px solid #ef4444", borderRadius: 8, padding: 8, fontWeight: 700 };
+  // Neutral, theme-adaptive backgrounds with a semantic-colored border
+  // (rather than the light pastel fills a hardcoded hex gives you) — the
+  // pastel tints looked right on a white canvas but would either vanish or
+  // clash against a dark one, and React Flow's default node text color
+  // isn't overridden here, so it needs a background that stays legible in
+  // both themes.
+  const groupStyle = { background: "var(--color-surface)", border: "1px solid var(--color-accent)", borderRadius: 8, padding: 8, fontWeight: 700, color: "var(--color-text)" };
+  const leafStyle = { background: "var(--color-surface)", border: "1px solid var(--color-success)", borderRadius: 8, padding: 8, fontSize: 12, color: "var(--color-text)" };
+  const eventStyle = { background: "var(--color-surface)", border: "1px solid var(--color-danger)", borderRadius: 8, padding: 8, fontWeight: 700, color: "var(--color-text)" };
 
   function layout(cond: ConditionGroup, depth: number): string {
     const id = `n${idCounter++}`;

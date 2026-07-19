@@ -130,6 +130,13 @@
   margin-bottom: var(--space-2);
 }
 
+.doc-view-toggle {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+
 .doc-list {
   display: flex;
   flex-direction: column;
@@ -148,9 +155,14 @@
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.8rem;
-  max-height: 220px;
+  max-height: 320px;
   overflow-y: auto;
   flex: 1;
+}
+
+.doc-row .friendly-doc {
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .doc-actions {

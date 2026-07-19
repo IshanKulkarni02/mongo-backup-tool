@@ -1,6 +1,6 @@
 // Package codegen turns a table's introspected schema into API/type
 // artifacts — an OpenAPI schema, a TypeScript interface, a Pydantic model —
-// aligning mongobak with a schema-first development workflow. Pure
+// aligning dbhelm with a schema-first development workflow. Pure
 // functions: no I/O, so every generator is directly golden-file testable.
 package codegen
 
@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 // sqlTypeClass buckets a dialect-specific data type into one of a handful

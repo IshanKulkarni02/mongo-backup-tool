@@ -36,9 +36,9 @@ leaving the terminal or needing network access.
 
 Run with no arguments for the full guide, or pass a topic to jump straight
 to it.`,
-	Example: `  mongobak guide
-  mongobak guide quickstart
-  mongobak guide snapshot`,
+	Example: `  dbhelm guide
+  dbhelm guide quickstart
+  dbhelm guide snapshot`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -79,13 +79,13 @@ func printGuideHeader(title string) {
 }
 
 func printGuideBanner() {
-	fmt.Println("mongobak — backup, restore, and version-control MongoDB databases")
-	fmt.Println("Full docs: https://github.com/IshanKulkarni02/mongo-backup-tool")
+	fmt.Println("dbhelm — backup, restore, and version-control MongoDB databases")
+	fmt.Println("Full docs: https://github.com/IshanKulkarni02/dbhelm")
 }
 
 func printGuideFooter() {
 	fmt.Println()
-	fmt.Println("Jump straight to a section next time: mongobak guide <topic>")
+	fmt.Println("Jump straight to a section next time: dbhelm guide <topic>")
 	fmt.Println("Topics: quickstart, connections, backup, snapshot, concepts, compare, troubleshooting")
 	fmt.Println()
 }
@@ -95,23 +95,23 @@ func printGuideQuickstart() {
 default port:
 
   1. Check dependencies
-     mongobak doctor
+     dbhelm doctor
 
   2. Save a connection
-     mongobak connection add local --uri "mongodb://localhost:27017"
+     dbhelm connection add local --uri "mongodb://localhost:27017"
 
   3. Confirm it works and see what databases exist
-     mongobak connection test local
+     dbhelm connection test local
 
   4. Take your first snapshot of a database
-     mongobak snapshot create --connection local --db myapp -m "initial checkpoint"
+     dbhelm snapshot create --connection local --db myapp -m "initial checkpoint"
 
   5. See it in your snapshot history
-     mongobak snapshot log --connection local --db myapp
+     dbhelm snapshot log --connection local --db myapp
 
   6. Or take a full portable backup instead/as well
-     mongobak backup --connection local --db myapp
-     mongobak list
+     dbhelm backup --connection local --db myapp
+     dbhelm list
 
 That's the whole loop — everything else builds on those six commands.`)
 }
@@ -122,11 +122,11 @@ func printGuideConnections() {
 --connection <name> --db <name> rather than a raw URI, so credentials are
 typed once.
 
-  mongobak connection add local --uri "mongodb://localhost:27017"
-  mongobak connection add atlas --uri "mongodb+srv://user:pass@cluster0.mongodb.net"
-  mongobak connection list                 # passwords are always redacted
-  mongobak connection test local           # confirms reachable, lists its databases
-  mongobak connection remove local
+  dbhelm connection add local --uri "mongodb://localhost:27017"
+  dbhelm connection add atlas --uri "mongodb+srv://user:pass@cluster0.mongodb.net"
+  dbhelm connection list                 # passwords are always redacted
+  dbhelm connection test local           # confirms reachable, lists its databases
+  dbhelm connection remove local
 
 Connection URIs may contain credentials, so they're stored in a config file
 with owner-only file permissions — see the README's "Where your data lives"
@@ -137,18 +137,18 @@ func printGuideBackup() {
 	fmt.Println(`A backup is a single, portable, gzip-compressed archive file produced by
 mongodump, restored with mongorestore — full fidelity, and the resulting
 .archive.gz file can be copied anywhere and restored on a different machine
-without mongobak, using plain mongorestore --archive=... --gzip.
+without dbhelm, using plain mongorestore --archive=... --gzip.
 
-  mongobak backup --connection local --db myapp     # one database
-  mongobak backup --connection local                # every database
-  mongobak list                                     # local archives: id, db, size, date
-  mongobak restore --backup <id> --connection local
-  mongobak restore --backup <id> --connection local --target-db myapp_staging
-  mongobak restore --backup <id> --connection local --drop   # overwrite in place
-  mongobak delete <id>
+  dbhelm backup --connection local --db myapp     # one database
+  dbhelm backup --connection local                # every database
+  dbhelm list                                     # local archives: id, db, size, date
+  dbhelm restore --backup <id> --connection local
+  dbhelm restore --backup <id> --connection local --target-db myapp_staging
+  dbhelm restore --backup <id> --connection local --drop   # overwrite in place
+  dbhelm delete <id>
 
 Backups are heavier than snapshots (a full dump every time, no dedup) but
-maximally portable and don't depend on mongobak's storage format — treat
+maximally portable and don't depend on dbhelm's storage format — treat
 them as your "take this and walk away" option.`)
 }
 
@@ -157,26 +157,26 @@ func printGuideSnapshot() {
 and instantly reversible. Snapshot IDs can be shortened to any unique
 prefix.
 
-  mongobak snapshot create --connection local --db myapp -m "before migration"
-  mongobak snapshot log --connection local --db myapp
+  dbhelm snapshot create --connection local --db myapp -m "before migration"
+  dbhelm snapshot log --connection local --db myapp
 
-  mongobak snapshot diff <id-a> <id-b> --connection local --db myapp
-  mongobak snapshot diff <id-a> --connection local --db myapp --live   # vs. live state
+  dbhelm snapshot diff <id-a> <id-b> --connection local --db myapp
+  dbhelm snapshot diff <id-a> --connection local --db myapp --live   # vs. live state
 
-  mongobak snapshot restore --snapshot <id> --connection local --db myapp
-  mongobak snapshot restore --snapshot <id> --connection local --db myapp --target-db myapp_staging
-  mongobak snapshot restore --snapshot <id> --connection local --db myapp --drop
-  mongobak snapshot restore --snapshot <id> --connection local --db myapp --collection users
-  mongobak snapshot restore --snapshot <id> --connection prod --db myapp --target-connection staging
+  dbhelm snapshot restore --snapshot <id> --connection local --db myapp
+  dbhelm snapshot restore --snapshot <id> --connection local --db myapp --target-db myapp_staging
+  dbhelm snapshot restore --snapshot <id> --connection local --db myapp --drop
+  dbhelm snapshot restore --snapshot <id> --connection local --db myapp --collection users
+  dbhelm snapshot restore --snapshot <id> --connection prod --db myapp --target-connection staging
 
-  mongobak snapshot tag <id> v1.0-before-migration --connection local --db myapp
-  mongobak snapshot gc --connection local --db myapp --keep-last 10
+  dbhelm snapshot tag <id> v1.0-before-migration --connection local --db myapp
+  dbhelm snapshot gc --connection local --db myapp --keep-last 10
 
 A --drop restore always takes an automatic safety snapshot of the target
 first, so an in-place rollback is never a one-way door. Tagged snapshots are
 always protected from gc.
 
-Run "mongobak guide concepts" for how content-addressing, dedup, and diff
+Run "dbhelm guide concepts" for how content-addressing, dedup, and diff
 actually work.`)
 }
 
@@ -209,7 +209,7 @@ func printGuideConcepts() {
   On a replica set (Atlas clusters qualify), snapshot creation uses
   MongoDB's readConcern:snapshot so a multi-collection snapshot reflects
   one consistent instant rather than a rolling scan. A bare standalone
-  mongod doesn't support this — mongobak falls back to a plain scan and
+  mongod doesn't support this — dbhelm falls back to a plain scan and
   says so.
 
   Storage engine
@@ -226,8 +226,8 @@ func printGuideCompare() {
   Full dump every time                    Only changed documents are stored
   No history or diff                      Full history, diff between any
                                            two points
-  Restorable anywhere with plain          Only restorable via mongobak, from
-  mongorestore, no mongobak needed        the same store
+  Restorable anywhere with plain          Only restorable via dbhelm, from
+  mongorestore, no dbhelm needed        the same store
   Best for: portable exports, disaster    Best for: frequent checkpoints,
   recovery archives                       pre-migration safety, rollback
 
@@ -241,15 +241,15 @@ func printGuideRemote() {
 anywhere else), backed by Git LFS so the compressed document content
 doesn't bloat the repo or hit file-size limits. Requires git and git-lfs.
 
-  mongobak remote init --connection local --db myapp \
+  dbhelm remote init --connection local --db myapp \
       --url git@github.com:you/myapp-snapshots.git
 
-  mongobak snapshot create --connection local --db myapp -m "checkpoint"
-  mongobak remote push --connection local --db myapp
+  dbhelm snapshot create --connection local --db myapp -m "checkpoint"
+  dbhelm remote push --connection local --db myapp
 
-  mongobak remote clone git@github.com:you/myapp-snapshots.git \
+  dbhelm remote clone git@github.com:you/myapp-snapshots.git \
       --connection local --db myapp
-  mongobak remote pull --connection local --db myapp
+  dbhelm remote pull --connection local --db myapp
 
 "remote init" only works on a brand-new connection+database scope — remote
 sync needs the file-per-document storage backend, not the default bbolt
@@ -257,7 +257,7 @@ one, and an existing bbolt-backed scope can't be converted. Use a fresh
 connection or database name for a remote-synced one.
 
 Pushing relies entirely on your own Git credentials (SSH key, gh auth
-login, etc.) — mongobak only ever runs git/git-lfs commands, never stores
+login, etc.) — dbhelm only ever runs git/git-lfs commands, never stores
 or asks for credentials itself.`)
 }
 
@@ -266,14 +266,14 @@ func printGuideScheduler() {
 Scheduler. Intervals are plain durations ("1h", "24h", "15m") rather than
 cron syntax.
 
-  mongobak scheduler add --connection local --db myapp \
+  dbhelm scheduler add --connection local --db myapp \
       --action snapshot --interval 1h -m "hourly checkpoint"
-  mongobak scheduler add --connection local --action backup --interval 24h
+  dbhelm scheduler add --connection local --action backup --interval 24h
 
-  mongobak scheduler list
-  mongobak scheduler remove <id>
+  dbhelm scheduler list
+  dbhelm scheduler remove <id>
 
-  mongobak scheduler run   # foreground daemon — checks every 30s, fires
+  dbhelm scheduler run   # foreground daemon — checks every 30s, fires
                             # anything due, until you Ctrl+C it
 
 "scheduler run" is meant to be left running — directly, under a process
@@ -285,21 +285,21 @@ at its normal interval instead of hammering every 30-second tick.`)
 
 func printGuideTroubleshooting() {
 	fmt.Println(`  mongodump/mongorestore not found
-    Run "mongobak doctor" for install instructions, or set
-    MONGOBAK_MONGODUMP_PATH / MONGOBAK_MONGORESTORE_PATH if they're
+    Run "dbhelm doctor" for install instructions, or set
+    DBHELM_MONGODUMP_PATH / DBHELM_MONGORESTORE_PATH if they're
     installed somewhere not on your PATH.
 
   "this deployment doesn't support readConcern:snapshot"
     Informational, not an error — the target is a standalone mongod rather
-    than a replica set, so mongobak took a plain snapshot instead of a
+    than a replica set, so dbhelm took a plain snapshot instead of a
     point-in-time-consistent one.
 
   "opening snapshot store ...: timeout"
     The embedded snapshot store can only be opened by one process at a
-    time. Make sure no other mongobak command is running against the same
+    time. Make sure no other dbhelm command is running against the same
     connection+database, then retry.
 
   "no connection named ..."
-    Check "mongobak connection list" — connection names are case-sensitive
+    Check "dbhelm connection list" — connection names are case-sensitive
     and must be added with "connection add" before use elsewhere.`)
 }

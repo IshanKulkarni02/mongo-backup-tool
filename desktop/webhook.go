@@ -6,7 +6,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/listener"
+	"github.com/IshanKulkarni02/dbhelm/internal/listener"
 )
 
 // StartWebhookListener starts (or restarts, if already running) a local

@@ -5,9 +5,9 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/migrations"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/schemadiff"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/migrations"
+	"github.com/IshanKulkarni02/dbhelm/internal/schemadiff"
 )
 
 // collectSchemas introspects every table in one connection/database.

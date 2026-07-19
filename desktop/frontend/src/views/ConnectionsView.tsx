@@ -20,7 +20,11 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../components/Toast";
 import "./ConnectionsView.css";
 
-export function ConnectionsView() {
+export function ConnectionsView({
+  onOpenDatabase,
+}: {
+  onOpenDatabase?: (connection: main.ConnectionInfo, database: string) => void;
+}) {
   const [connections, setConnections] = useState<main.ConnectionInfo[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
@@ -114,9 +118,16 @@ export function ConnectionsView() {
                     {result.length === 0
                       ? "No databases"
                       : result.map((d) => (
-                          <span key={d} className="conn-db-chip mono">
+                          <button
+                            key={d}
+                            type="button"
+                            className="conn-db-chip mono"
+                            onClick={() => onOpenDatabase?.(c, d)}
+                            disabled={!onOpenDatabase}
+                            title={onOpenDatabase ? `Open ${d}` : undefined}
+                          >
                             {d}
-                          </span>
+                          </button>
                         ))}
                   </div>
                 )}

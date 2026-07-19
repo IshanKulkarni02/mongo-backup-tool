@@ -1,14 +1,14 @@
-module github.com/IshanKulkarni02/mongo-backup-tool/desktop
+module github.com/IshanKulkarni02/dbhelm/desktop
 
 go 1.26.5
 
 require (
-	github.com/IshanKulkarni02/mongo-backup-tool v0.0.0-00010101000000-000000000000
+	github.com/IshanKulkarni02/dbhelm v0.0.0-00010101000000-000000000000
 	github.com/google/uuid v1.6.0
 	github.com/wailsapp/wails/v2 v2.13.0
 )
 
-replace github.com/IshanKulkarni02/mongo-backup-tool => ../
+replace github.com/IshanKulkarni02/dbhelm => ../
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect

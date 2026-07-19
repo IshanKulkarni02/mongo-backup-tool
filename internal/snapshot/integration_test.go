@@ -12,7 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/testmongod"
+	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
 
 // seedDocs inserts n documents into database/collection, returning nothing —
@@ -51,11 +51,11 @@ func countDocs(t *testing.T, ctx context.Context, uri, database, collection stri
 
 // withTestScope points snapshot.scopeDir at a fresh temp config dir for the
 // duration of one test, so integration tests never touch the real
-// ~/.mongobak store and never collide with each other or a real CLI/desktop
+// ~/.dbhelm store and never collide with each other or a real CLI/desktop
 // session running concurrently.
 func withTestScope(t *testing.T) {
 	t.Helper()
-	t.Setenv("MONGOBAK_CONFIG_DIR", t.TempDir())
+	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
 }
 
 func TestStandaloneFallbackDegradesGracefully(t *testing.T) {
