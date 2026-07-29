@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,7 +11,45 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
-func newTestAppWithSQLiteConn(t *testing.T, connName, uri string) *App {
+// jobTracker records every "job:update" a jobManager would have emitted
+// to the frontend, so tests can observe a job's terminal state the same
+// way the frontend does. jobManager removes a finished job's entry from
+// its own map once that update is sent (see #41), so polling the map
+// directly after completion no longer works.
+type jobTracker struct {
+	mu      sync.Mutex
+	entries map[string]Job
+}
+
+func newJobTracker(a *App) *jobTracker {
+	tr := &jobTracker{entries: map[string]Job{}}
+	a.jobs.onUpdate = func(j Job) {
+		tr.mu.Lock()
+		tr.entries[j.ID] = j
+		tr.mu.Unlock()
+	}
+	return tr
+}
+
+func (tr *jobTracker) wait(t *testing.T, id string) Job {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		tr.mu.Lock()
+		j, ok := tr.entries[id]
+		tr.mu.Unlock()
+		if ok && j.Status != JobRunning {
+			return j
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for job to finish")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func newTestAppWithSQLiteConn(t *testing.T, connName, uri string) (*App, *jobTracker) {
 	t.Helper()
 	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
 	cfg, err := config.Load()
@@ -27,25 +66,7 @@ func newTestAppWithSQLiteConn(t *testing.T, connName, uri string) *App {
 	}
 	a := NewApp()
 	t.Cleanup(a.engines.Close)
-	return a
-}
-
-func waitForJob(t *testing.T, a *App, id string) Job {
-	t.Helper()
-	deadline := time.After(5 * time.Second)
-	for {
-		a.jobs.mu.Lock()
-		j := *a.jobs.jobs[id]
-		a.jobs.mu.Unlock()
-		if j.Status != JobRunning {
-			return j
-		}
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for job to finish")
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	return a, newJobTracker(a)
 }
 
 // TestCreateSnapshotDispatchesToSQLForSQLiteConnection exercises the
@@ -53,7 +74,7 @@ func waitForJob(t *testing.T, a *App, id string) Job {
 // (sqlite here, no Docker needed) must go through snapshot.CreateSQL, not
 // the Mongo-only snapshot.Create, which would fail parsing a non-mongodb URI.
 func TestCreateSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
-	a := newTestAppWithSQLiteConn(t, "sqlite-dispatch-test", "file::memory:?cache=private")
+	a, jobs := newTestAppWithSQLiteConn(t, "sqlite-dispatch-test", "file::memory:?cache=private")
 
 	sess, release, err := a.sqlSession("sqlite-dispatch-test")
 	if err != nil {
@@ -71,7 +92,7 @@ func TestCreateSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
-	job := waitForJob(t, a, jobID)
+	job := jobs.wait(t, jobID)
 	if job.Status != JobDone {
 		t.Fatalf("expected job to succeed, got status=%s message=%s", job.Status, job.Message)
 	}
@@ -93,7 +114,7 @@ func TestCreateSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
 // desktop wire-up correctly reaches snapshot.RestoreSQLWithSafety for a SQL
 // connection instead of the Mongo-only RestoreWithSafety.
 func TestRestoreSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
-	a := newTestAppWithSQLiteConn(t, "sqlite-restore-dispatch-test", "file::memory:?cache=private")
+	a, jobs := newTestAppWithSQLiteConn(t, "sqlite-restore-dispatch-test", "file::memory:?cache=private")
 
 	sess, release, err := a.sqlSession("sqlite-restore-dispatch-test")
 	if err != nil {
@@ -111,7 +132,7 @@ func TestRestoreSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
-	createJob := waitForJob(t, a, createJobID)
+	createJob := jobs.wait(t, createJobID)
 	if createJob.Status != JobDone {
 		t.Fatalf("expected create job to succeed, got status=%s message=%s", createJob.Status, createJob.Message)
 	}
@@ -130,7 +151,7 @@ func TestRestoreSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestoreSnapshot: %v", err)
 	}
-	restoreJob := waitForJob(t, a, restoreJobID)
+	restoreJob := jobs.wait(t, restoreJobID)
 	if restoreJob.Status != JobDone {
 		t.Fatalf("expected restore job to succeed, got status=%s message=%s", restoreJob.Status, restoreJob.Message)
 	}
