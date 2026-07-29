@@ -86,6 +86,94 @@ func TestFSBackendCorruptDocRefLineFailsClearly(t *testing.T) {
 	}
 }
 
+// TestFSBackendDocRefsCollisionResistant is the regression test for #48:
+// sanitize() maps every character outside [A-Za-z0-9._-] to "_", so two
+// differently-named collections can sanitize to the same string (e.g.
+// Mongo collections "a$b" and "a!b" both become "a_b"). Without a
+// collision guard, the second WriteDocRefs call would silently clobber
+// the first collection's doc-ref file.
+func TestFSBackendDocRefsCollisionResistant(t *testing.T) {
+	dir := t.TempDir()
+	b, err := newFSBackend(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	if sanitize("a$b") != sanitize("a!b") {
+		t.Fatalf("test setup invalid: %q and %q don't actually sanitize to the same string", "a$b", "a!b")
+	}
+
+	if err := b.WriteDocRefs("m1", "a$b", newSliceDocRefIterator([]DocRef{{ID: "1", Hash: "hash-dollar"}})); err != nil {
+		t.Fatalf("WriteDocRefs(a$b): %v", err)
+	}
+	if err := b.WriteDocRefs("m1", "a!b", newSliceDocRefIterator([]DocRef{{ID: "2", Hash: "hash-bang"}})); err != nil {
+		t.Fatalf("WriteDocRefs(a!b): %v", err)
+	}
+
+	itDollar, err := b.IterDocRefs("m1", "a$b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotDollar, err := drainDocRefIterator(itDollar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotDollar) != 1 || gotDollar[0].Hash != "hash-dollar" {
+		t.Fatalf("a$b's doc-refs = %+v, want [{1 hash-dollar}] — got clobbered by a!b's write", gotDollar)
+	}
+
+	itBang, err := b.IterDocRefs("m1", "a!b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotBang, err := drainDocRefIterator(itBang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotBang) != 1 || gotBang[0].Hash != "hash-bang" {
+		t.Fatalf("a!b's doc-refs = %+v, want [{2 hash-bang}]", gotBang)
+	}
+
+	if b.docRefsPath("m1", "a$b") == b.docRefsPath("m1", "a!b") {
+		t.Fatal("docRefsPath produced the same file path for two differently-named collections")
+	}
+}
+
+// TestFSBackendIterDocRefsFallsBackToLegacyPath confirms doc-ref data
+// written by an older dbhelm build (before the #48 collision fix added a
+// hash suffix to the file name) is still readable after upgrading,
+// rather than silently appearing as an empty collection.
+func TestFSBackendIterDocRefsFallsBackToLegacyPath(t *testing.T) {
+	dir := t.TempDir()
+	b, err := newFSBackend(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	if err := os.MkdirAll(b.docRefsDir("m1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := b.legacyDocRefsPath("m1", "widgets")
+	legacyContent := `{"id":"a","hash":"legacy-hash"}` + "\n"
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	it, err := b.IterDocRefs("m1", "widgets")
+	if err != nil {
+		t.Fatalf("IterDocRefs: %v", err)
+	}
+	got, err := drainDocRefIterator(it)
+	if err != nil {
+		t.Fatalf("draining iterator: %v", err)
+	}
+	if len(got) != 1 || got[0].Hash != "legacy-hash" {
+		t.Fatalf("got %+v, want a single ref with hash \"legacy-hash\" read from the legacy path", got)
+	}
+}
+
 // TestGCRemovesUnreferencedObjectsOnly confirms GC deletes only objects no
 // longer referenced by any kept snapshot, keeps tagged snapshots regardless
 // of KeepLast, and prunes old untagged manifests correctly.
