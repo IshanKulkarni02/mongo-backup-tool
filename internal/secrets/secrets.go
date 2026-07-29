@@ -27,6 +27,14 @@ var (
 	// every config load in the same process. Guarded by cacheMu.
 	cacheMu sync.Mutex
 	cache   = map[string]string{}
+
+	// failKeys, when non-nil, makes Set fail for exactly these keys —
+	// test-only, for simulating a keyring backend that silently fails a
+	// subset of writes (the real-world failure mode issue #62 guards
+	// against: MigrateCredentials must not report success for a secret
+	// whose Set actually failed).
+	failKeysMu sync.Mutex
+	failKeys   map[string]bool
 )
 
 // Available reports whether a working system keyring exists. The first
@@ -47,6 +55,12 @@ func Available() bool {
 
 // Set stores a secret under key.
 func Set(key, value string) error {
+	failKeysMu.Lock()
+	shouldFail := failKeys[key]
+	failKeysMu.Unlock()
+	if shouldFail {
+		return errors.New("secrets: mock failure for " + key)
+	}
 	if err := keyring.Set(service, key, value); err != nil {
 		return err
 	}
@@ -98,4 +112,20 @@ func MockInit() {
 	cacheMu.Lock()
 	cache = map[string]string{}
 	cacheMu.Unlock()
+	failKeysMu.Lock()
+	failKeys = nil
+	failKeysMu.Unlock()
+}
+
+// MockFailFor makes Set fail for exactly the given keys, for testing a
+// partial keyring-write-failure path. Call after MockInit; pass no keys
+// (or call ResetForTesting) to clear.
+func MockFailFor(keys ...string) {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	failKeysMu.Lock()
+	failKeys = m
+	failKeysMu.Unlock()
 }

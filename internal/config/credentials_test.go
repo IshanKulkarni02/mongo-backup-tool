@@ -139,6 +139,47 @@ func TestMigrateCredentialsMovesExistingPlaintextPassword(t *testing.T) {
 	}
 }
 
+// TestMigrateCredentialsDoesNotCountAFailedKeyringWrite is the regression
+// test for #62: setSecretVerified (inside Save's stripCredentials) can
+// silently fail a specific secret's keyring write while leaving its
+// plaintext value in place, with no error surfaced anywhere.
+// MigrateCredentials must detect that and not count it as migrated, even
+// though it looked like a valid candidate before Save ran.
+func TestMigrateCredentialsDoesNotCountAFailedKeyringWrite(t *testing.T) {
+	withTempConfigDir(t)
+	secrets.MockInit()
+	// Simulate the keyring silently failing this one specific write.
+	secrets.MockFailFor(credentialKey("legacy"))
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	raw := `{"connections":[{"name":"legacy","uri":"mongodb://user:hunter2@localhost:27017","createdAt":"now"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatalf("seeding legacy config: %v", err)
+	}
+
+	n, err := MigrateCredentials()
+	if err != nil {
+		t.Fatalf("MigrateCredentials: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 connections reported migrated (the keyring write failed), got %d — false success", n)
+	}
+
+	// The password must still be recoverable — a failed keyring write
+	// falls back to keeping the plaintext URI, per stripCredentials' own
+	// contract, so this isn't a data-loss bug, just a reporting one.
+	onDisk, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("reading config after failed migration: %v", err)
+	}
+	if !strings.Contains(string(onDisk), "hunter2") {
+		t.Fatalf("expected the plaintext password to survive a failed migration attempt, got: %s", onDisk)
+	}
+}
+
 func TestRemoveDeletesCredential(t *testing.T) {
 	withTempConfigDir(t)
 	secrets.MockInit()
