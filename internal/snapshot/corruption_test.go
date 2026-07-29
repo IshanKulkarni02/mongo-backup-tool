@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestBoltBackendRejectsCorruptStoreFile confirms that a truncated/garbage
@@ -220,6 +221,13 @@ func TestGCRecoversAbandonedManifest(t *testing.T) {
 	if err := saveManifest(scope, abandoned); err != nil {
 		t.Fatal(err)
 	}
+	// Back-date the manifest file past recoverGracePeriod: a manifest this
+	// young is presumed to be an in-flight Create that just hasn't reached
+	// its index append yet (see #52), not something GC should touch.
+	old := time.Now().Add(-2 * recoverGracePeriod)
+	if err := os.Chtimes(manifestPath(scope, abandoned.ID), old, old); err != nil {
+		t.Fatal(err)
+	}
 	if err := backend.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -255,6 +263,78 @@ func TestGCRecoversAbandonedManifest(t *testing.T) {
 	}
 	if m.DocCount() != 1 {
 		t.Errorf("real snapshot DocCount after GC = %d, want 1", m.DocCount())
+	}
+}
+
+// TestGCDoesNotReclaimFreshUnindexedManifest is the regression test for
+// #52: Create/CreateSQL write a manifest and its doc-refs *before*
+// acquiring the scope lock for the (fast) index append, so there's a
+// real — if normally brief — window where a brand-new manifest exists on
+// disk but isn't indexed yet, simply because that Create call hasn't
+// reached its index append, not because anything crashed. Without a
+// grace period, a concurrent GC could mistake that in-flight manifest for
+// an abandoned one and delete it, permanently breaking the snapshot once
+// Create resumes and appends its now-dangling ID to the index.
+func TestGCDoesNotReclaimFreshUnindexedManifest(t *testing.T) {
+	withTestScope(t)
+	scope, err := scopeDir("gc-inflight-create", "gcdb5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := OpenBackend(scope, BackendBolt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate Create() up to (but not including) its index append: the
+	// manifest and doc-refs are fully written, but the index knows
+	// nothing about this snapshot yet — indistinguishable on disk from a
+	// genuinely abandoned manifest, except for its age.
+	h, _, err := putOne(backend, []byte(`{"v":"in-flight"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFlight := &Manifest{ID: "snap-in-flight", Connection: "gc-inflight-create", Database: "gcdb5", CreatedAt: "2026-01-01T00:00:00Z",
+		Collections: map[string]CollectionManifest{"widgets": {DocCount: 1}}}
+	if err := backend.WriteDocRefs(inFlight.ID, "widgets", newSliceDocRefIterator([]DocRef{{ID: "a", Hash: h}})); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveManifest(scope, inFlight); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// GC runs in this gap, before Create's own index append.
+	result, err := GC(GCOptions{Connection: "gc-inflight-create", Database: "gcdb5", KeepLast: 10})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if result.AbandonedRecovered != 0 {
+		t.Fatalf("AbandonedRecovered = %d, want 0 — GC reclaimed a fresh, still-in-flight manifest", result.AbandonedRecovered)
+	}
+	if _, err := os.Stat(manifestPath(scope, "snap-in-flight")); err != nil {
+		t.Fatalf("expected the in-flight manifest to survive GC: %v", err)
+	}
+
+	// Create resumes and appends its summary — this must not be a dangling
+	// reference to a manifest GC already deleted.
+	idx, err := loadIndex(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Snapshots = append(idx.Snapshots, Summary{ID: "snap-in-flight", CreatedAt: inFlight.CreatedAt, DocCount: 1})
+	if err := saveIndex(scope, idx); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Get("gc-inflight-create", "gcdb5", "snap-in-flight")
+	if err != nil {
+		t.Fatalf("Get(snap-in-flight) after its Create completed: %v", err)
+	}
+	if m.DocCount() != 1 {
+		t.Errorf("DocCount = %d, want 1", m.DocCount())
 	}
 }
 
