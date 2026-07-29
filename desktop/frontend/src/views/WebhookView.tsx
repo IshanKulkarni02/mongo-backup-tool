@@ -260,7 +260,7 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
         .map((c) => {
           const raw = flatFields[mapping[c.name]] ?? "";
           const looksNumeric = /^-?\d+(\.\d+)?$/.test(raw.trim());
-          return sqlLiteral(raw, looksNumeric ? "number" : "string");
+          return sqlLiteral(raw, looksNumeric ? "number" : "string", activeEngine);
         })
         .join(", ");
       const sql = `INSERT INTO ${ident} (${cols}) VALUES (${vals})`;

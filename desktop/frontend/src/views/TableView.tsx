@@ -250,7 +250,7 @@ function RowsPanel({
     // rowFilter narrows to the single referenced row after a foreign-key
     // click navigated here — same query shape, just WHERE-qualified.
     const whereClause = rowFilter
-      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type)}`
+      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type, engineId)}`
       : "";
     RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident}${whereClause} LIMIT ${ROW_LIMIT}`)
       .then(setResult)
@@ -290,8 +290,8 @@ function RowsPanel({
     const pkCell = result.rows[rowIndex][pkCol];
     if (!pkCell) return;
     const ident = quoteIdent(engineId, table);
-    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string")}`;
-    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string", engineId)}`;
+    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     try {
       // Always a WHERE-qualified single-row UPDATE, so it's never
       // classified Safe-Mode-dangerous — the confirm param only matters
@@ -651,7 +651,7 @@ function RelationshipInspector({
     setChildRows(null);
     referencingTables.forEach((ref) => {
       const ident = quoteIdent(engineId, ref.table);
-      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
       RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`)
         .then((r) => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length })))
         .catch(() => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" })));
@@ -670,7 +670,7 @@ function RelationshipInspector({
     setChildRows(null);
     if (!pkCell) return;
     const ident = quoteIdent(engineId, ref.table);
-    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
     setChildRows(r);
   }
