@@ -88,7 +88,15 @@ func resolveCredentials(cfg *Config) {
 // keep their full URI on disk — the pre-keychain behavior, still protected
 // by the file's 0600 mode.
 func stripCredentials(cfg *Config) *Config {
-	out := &Config{Connections: make([]Connection, len(cfg.Connections))}
+	// AI and Launcher must be copied through explicitly — this function
+	// only ever constructed out with Connections set, so every Save
+	// silently dropped both from disk regardless of secrets.Available(),
+	// even though neither holds anything this function needs to strip.
+	out := &Config{
+		Connections: make([]Connection, len(cfg.Connections)),
+		AI:          cfg.AI,
+		Launcher:    cfg.Launcher,
+	}
 	copy(out.Connections, cfg.Connections)
 	if !secrets.Available() {
 		return out

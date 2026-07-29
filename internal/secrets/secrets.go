@@ -99,3 +99,26 @@ func MockInit() {
 	cache = map[string]string{}
 	cacheMu.Unlock()
 }
+
+// MockUnavailable forces Available() to report false for the rest of the
+// process, for testing a plaintext-fallback/warning path without
+// depending on whether the real test environment happens to have a
+// working keyring. Callers should defer ResetForTesting so this doesn't
+// leak into unrelated tests sharing the same test binary.
+func MockUnavailable() {
+	probeOnce.Do(func() {})
+	probeOK = false
+}
+
+// ResetForTesting clears the cached Available() probe result and cache,
+// letting a subsequent call re-probe the real keyring (or be re-mocked
+// via MockInit/MockUnavailable) — for tests that call MockInit/
+// MockUnavailable and need to avoid leaking that forced state into other
+// tests sharing the same test binary process.
+func ResetForTesting() {
+	probeOnce = sync.Once{}
+	probeOK = false
+	cacheMu.Lock()
+	cache = map[string]string{}
+	cacheMu.Unlock()
+}
