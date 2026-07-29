@@ -258,6 +258,97 @@ func TestGCRecoversAbandonedManifest(t *testing.T) {
 	}
 }
 
+// TestGCPartialDeletionFailureLeavesRecoverableAbandonedManifest is the
+// regression test for #53: gcLocked used to delete a pruned snapshot's
+// manifest+doc-refs *before* saving the updated index, so a failure
+// partway through left the index still claiming the (now
+// partially-deleted) snapshot was valid — a state
+// recoverAbandonedManifests's unindexed-only check could never clean up.
+// gcLocked now saves the index (with the snapshot already removed)
+// *before* attempting any file deletion, so a failure here instead
+// leaves an unindexed-but-still-present manifest — exactly the shape
+// recoverAbandonedManifests already knows how to finish cleaning up on
+// the next GC pass.
+func TestGCPartialDeletionFailureLeavesRecoverableAbandonedManifest(t *testing.T) {
+	withTestScope(t)
+	scope, err := scopeDir("gc-partial-fail", "gcdb4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fs backend (not bolt) so the doc-ref/manifest deletion failure
+	// can be injected via filesystem permissions.
+	backend, err := OpenBackend(scope, BackendFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h, _, err := putOne(backend, []byte(`{"v":"pruned"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Manifest{ID: "snap-pruned", Connection: "gc-partial-fail", Database: "gcdb4", CreatedAt: "2026-01-01T00:00:00Z",
+		Collections: map[string]CollectionManifest{"widgets": {DocCount: 1}}}
+	if err := backend.WriteDocRefs(m.ID, "widgets", newSliceDocRefIterator([]DocRef{{ID: "a", Hash: h}})); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveManifest(scope, m); err != nil {
+		t.Fatal(err)
+	}
+	idx := &scopeIndex{Snapshots: []Summary{{ID: "snap-pruned", CreatedAt: m.CreatedAt, DocCount: 1}}}
+	if err := saveIndex(scope, idx); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make the manifests directory read-only so the manifest/doc-ref
+	// deletion inside gcLocked fails partway through (permission denied
+	// removing entries from it), simulating a mid-deletion failure —
+	// disk full, a permissions problem, or (closer to the issue's real
+	// motivation) a crash between the two deletion syscalls.
+	mdir := manifestsDir(scope)
+	if err := os.Chmod(mdir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(mdir, 0o755) }) // restore so t.TempDir() cleanup can remove it
+
+	// KeepLast: 0 prunes the only (untagged) snapshot.
+	_, err = GC(GCOptions{Connection: "gc-partial-fail", Database: "gcdb4", KeepLast: 0})
+	if err == nil {
+		t.Fatal("expected GC to fail deleting from a read-only manifests directory")
+	}
+
+	idxAfterFailure, err := loadIndex(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idxAfterFailure.Snapshots) != 0 {
+		t.Fatalf("expected the index to already have dropped the pruned snapshot despite the deletion failure, got %+v", idxAfterFailure.Snapshots)
+	}
+	if _, err := os.Stat(manifestPath(scope, "snap-pruned")); err != nil {
+		t.Fatalf("expected the manifest file to still be present after the failed deletion attempt: %v", err)
+	}
+
+	// Restore write access (as if the disk-full/permissions problem
+	// resolved itself, or a fresh process starts with normal
+	// permissions) and let a subsequent GC pass's abandoned-manifest
+	// recovery finish the job.
+	if err := os.Chmod(mdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := GC(GCOptions{Connection: "gc-partial-fail", Database: "gcdb4", KeepLast: 0})
+	if err != nil {
+		t.Fatalf("follow-up GC: %v", err)
+	}
+	if result.AbandonedRecovered != 1 {
+		t.Fatalf("AbandonedRecovered = %d, want 1 (the leftover manifest from the earlier partial failure)", result.AbandonedRecovered)
+	}
+	if _, err := os.Stat(manifestPath(scope, "snap-pruned")); !os.IsNotExist(err) {
+		t.Errorf("expected the leftover manifest to finally be removed, stat err = %v", err)
+	}
+}
+
 // TestGCKeepsTaggedSnapshotsRegardlessOfKeepLast confirms tagged snapshots
 // survive GC even when KeepLast would otherwise prune them.
 func TestGCKeepsTaggedSnapshotsRegardlessOfKeepLast(t *testing.T) {
