@@ -39,11 +39,46 @@ var (
 	firstWordRe      = regexp.MustCompile(`(?i)^([a-zA-Z]+)`)
 )
 
-// Classify inspects a single SQL statement (no trailing semicolon assumed)
-// and returns its risk level. It works on statement text alone — it does
-// not need a live connection or a parsed AST, so it can run synchronously
-// in front of every Execute call.
+// riskRank orders Risk from least to most severe, so scanning multiple
+// statements can keep "the worst one seen so far."
+func riskRank(r Risk) int {
+	switch r {
+	case RiskDangerous:
+		return 2
+	case RiskConfirm:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// Classify inspects sqlText — which may contain more than one
+// semicolon-separated statement — and returns the risk of the single most
+// dangerous statement found in it. Statement text alone is used — no live
+// connection or parsed AST needed — so this can run synchronously in
+// front of every Execute call.
 func Classify(sqlText string) Classification {
+	stmts := splitStatements(sqlText)
+	if len(stmts) <= 1 {
+		return classifyOne(sqlText)
+	}
+	worst := Classification{Risk: RiskNone}
+	for _, s := range stmts {
+		c := classifyOne(s)
+		if riskRank(c.Risk) > riskRank(worst.Risk) {
+			worst = c
+		}
+	}
+	return worst
+}
+
+// classifyOne is Classify's original single-statement logic (no
+// semicolon-splitting): line/keyword based, not a real SQL parser, so it
+// can be fooled by pathological input within one statement — acceptable
+// for a UI confirmation gate, not a security boundary. Classify's job is
+// making sure every statement in a multi-statement string actually reaches
+// this function once.
+func classifyOne(sqlText string) Classification {
 	stripped := leadingCommentRe.ReplaceAllString(sqlText, "")
 	stripped = strings.TrimSpace(stripped)
 	if stripped == "" {
@@ -52,9 +87,7 @@ func Classify(sqlText string) Classification {
 
 	// A leading CTE (WITH ...) doesn't change the risk of whatever
 	// statement it ultimately feeds; peel it off by jumping to the first
-	// top-level DML/DDL keyword we recognize. This is line/keyword based,
-	// not a real SQL parser, so it can be fooled by pathological input —
-	// acceptable for a UI confirmation gate, not a security boundary.
+	// top-level DML/DDL keyword we recognize.
 	upper := strings.ToUpper(stripped)
 	verb := firstWordRe.FindString(upper)
 
@@ -84,6 +117,79 @@ func Classify(sqlText string) Classification {
 	}
 }
 
+// splitStatements splits sqlText on top-level semicolons — skipping ones
+// inside single/double-quoted strings or `--`/`/* */` comments — so
+// "SELECT 1; DROP TABLE users" splits into two statements instead of
+// being classified only by its leading SELECT, and a semicolon inside a
+// string literal or comment never causes a false split. This is a
+// character-based scanner, not a real SQL parser (see classifyOne's doc
+// comment on the same limitation); it only needs to be good enough to
+// find statement boundaries, not to fully validate syntax.
+func splitStatements(sqlText string) []string {
+	var stmts []string
+	var cur strings.Builder
+	runes := []rune(sqlText)
+	n := len(runes)
+	i := 0
+	for i < n {
+		c := runes[i]
+		switch {
+		case c == '\'' || c == '"':
+			quote := c
+			cur.WriteRune(c)
+			i++
+			for i < n {
+				cur.WriteRune(runes[i])
+				if runes[i] == quote {
+					if i+1 < n && runes[i+1] == quote {
+						i++
+						cur.WriteRune(runes[i])
+						i++
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+		case c == '-' && i+1 < n && runes[i+1] == '-':
+			for i < n && runes[i] != '\n' {
+				cur.WriteRune(runes[i])
+				i++
+			}
+		case c == '/' && i+1 < n && runes[i+1] == '*':
+			cur.WriteRune(runes[i])
+			cur.WriteRune(runes[i+1])
+			i += 2
+			for i+1 < n && !(runes[i] == '*' && runes[i+1] == '/') {
+				cur.WriteRune(runes[i])
+				i++
+			}
+			if i+1 < n {
+				cur.WriteRune(runes[i])
+				cur.WriteRune(runes[i+1])
+				i += 2
+			} else {
+				for i < n {
+					cur.WriteRune(runes[i])
+					i++
+				}
+			}
+		case c == ';':
+			stmts = append(stmts, cur.String())
+			cur.Reset()
+			i++
+		default:
+			cur.WriteRune(c)
+			i++
+		}
+	}
+	if strings.TrimSpace(cur.String()) != "" {
+		stmts = append(stmts, cur.String())
+	}
+	return stmts
+}
+
 // readVerbs are statement verbs that never modify data, so callers that
 // only ever intend to read (RunSQLQuery's bounded table-browser path,
 // RunSavedQuery) can skip the requireWritable/Classify gating entirely —
@@ -94,13 +200,29 @@ var readVerbs = map[string]bool{
 
 var writeVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER|CREATE)\b`)
 
-// IsRead reports whether sqlText is a read-only statement: SELECT, SHOW,
-// PRAGMA, EXPLAIN, or a WITH/CTE whose text contains no write verb
-// anywhere. The WITH case is intentionally conservative — a false negative
-// here just means an ordinary read gets routed through the write-gated
-// path, whereas a false positive would let a destructive CTE bypass
-// requireWritable and the dangerous-statement confirmation entirely.
+// IsRead reports whether every statement in sqlText (which may contain
+// more than one semicolon-separated statement) is read-only: SELECT,
+// SHOW, PRAGMA, EXPLAIN, or a WITH/CTE whose text contains no write verb
+// anywhere. A single non-read statement anywhere in the input makes the
+// whole thing non-read — the same reasoning as Classify: a false negative
+// here just routes an ordinary read through the write-gated path, whereas
+// a false positive would let a destructive statement riding alongside an
+// innocuous leading SELECT bypass requireWritable and the
+// dangerous-statement confirmation entirely.
 func IsRead(sqlText string) bool {
+	stmts := splitStatements(sqlText)
+	if len(stmts) <= 1 {
+		return isReadOne(sqlText)
+	}
+	for _, s := range stmts {
+		if !isReadOne(s) {
+			return false
+		}
+	}
+	return true
+}
+
+func isReadOne(sqlText string) bool {
 	stripped := leadingCommentRe.ReplaceAllString(sqlText, "")
 	stripped = strings.TrimSpace(stripped)
 	upper := strings.ToUpper(stripped)

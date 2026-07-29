@@ -45,9 +45,26 @@ func TestClassify(t *testing.T) {
 		{"cte then delete with where", "WITH x AS (SELECT 1) DELETE FROM users WHERE id = 1", RiskConfirm},
 		{"cte then select", "WITH x AS (SELECT 1) SELECT * FROM x", RiskNone},
 
-		// Multiple statements: DROP anywhere should still flag dangerous
-		// even if it's not the first keyword after a CTE-less statement.
-		{"select then drop", "SELECT 1; DROP TABLE users", RiskNone}, // documented limitation: only first statement's verb is checked
+		// Multiple statements (#82): a dangerous statement anywhere in a
+		// semicolon-separated string must be caught, not just the first
+		// statement's verb.
+		{"select then drop", "SELECT 1; DROP TABLE users", RiskDangerous},
+		{"select then delete no where", "SELECT 1; DELETE FROM users", RiskDangerous},
+		{"select then delete with where, worst wins", "SELECT 1; DELETE FROM users WHERE id = 1; DROP TABLE users", RiskDangerous},
+		{"select then confirm-risk delete", "SELECT 1; DELETE FROM users WHERE id = 1", RiskConfirm},
+		{"all safe statements", "SELECT 1; INSERT INTO t VALUES (1)", RiskNone},
+		// A semicolon inside a string literal must not be mistaken for a
+		// statement boundary — this is one statement, not two, and its
+		// (only) verb is SELECT.
+		{"semicolon inside string literal", "SELECT 'a;b' AS val", RiskNone},
+		// ...but a real second statement after a string containing a
+		// semicolon must still be found.
+		{"string with semicolon then real drop", "SELECT 'a;b'; DROP TABLE users", RiskDangerous},
+		// A semicolon inside a line comment must not split either.
+		{"semicolon inside line comment", "SELECT 1 -- notes: a;b\n", RiskNone},
+		// Trailing semicolon/whitespace shouldn't produce a bogus empty
+		// second statement that changes the result.
+		{"trailing semicolon", "DROP TABLE users;", RiskDangerous},
 	}
 
 	for _, c := range cases {
@@ -79,6 +96,12 @@ func TestIsRead(t *testing.T) {
 		{"cte with delete", "WITH x AS (SELECT 1) DELETE FROM users", false},
 
 		{"empty", "", false},
+
+		// Multiple statements (#82): a write hiding behind a leading read
+		// must not be classified as read-only.
+		{"select then drop", "SELECT 1; DROP TABLE users", false},
+		{"two reads", "SELECT 1; SHOW TABLES", true},
+		{"semicolon inside string stays one read statement", "SELECT 'a;b' AS val", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
