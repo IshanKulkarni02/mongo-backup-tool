@@ -19,6 +19,15 @@ const service = "dbhelm"
 // ErrNotFound is returned by Get when no secret exists under the key.
 var ErrNotFound = errors.New("secret not found")
 
+// UnavailableWarning is shown wherever a caller needs to tell the user
+// their credentials are unprotected on this machine (no OS keyring means
+// Save falls back to storing them in plaintext, in config.json — see
+// internal/config/credentials.go's stripCredentials). The desktop app
+// already surfaces this in the Connections view; CLI/TUI call sites
+// should show it too whenever !Available(), since a headless server or
+// container is exactly the environment most likely to lack a keyring.
+const UnavailableWarning = "no system keyring is available on this machine — database and SSH credentials are stored in plaintext in config.json, protected only by its owner-only file permissions (0600), not encryption. Set up a keyring (e.g. gnome-keyring or a Secret Service provider on Linux) for stronger protection."
+
 var (
 	probeOnce sync.Once
 	probeOK   bool
@@ -95,6 +104,29 @@ func MockInit() {
 	keyring.MockInit()
 	probeOnce.Do(func() {})
 	probeOK = true
+	cacheMu.Lock()
+	cache = map[string]string{}
+	cacheMu.Unlock()
+}
+
+// MockUnavailable forces Available() to report false for the rest of the
+// process, for testing the plaintext-fallback/warning path without
+// depending on whether the real test environment happens to have a
+// working keyring. Callers should defer ResetForTesting so this doesn't
+// leak into unrelated tests sharing the same test binary.
+func MockUnavailable() {
+	probeOnce.Do(func() {})
+	probeOK = false
+}
+
+// ResetForTesting clears the cached Available() probe result and cache,
+// letting a subsequent call re-probe the real keyring (or be re-mocked
+// via MockInit/MockUnavailable) — for tests that call MockInit/
+// MockUnavailable and need to avoid leaking that forced state into other
+// tests sharing the same test binary process.
+func ResetForTesting() {
+	probeOnce = sync.Once{}
+	probeOK = false
 	cacheMu.Lock()
 	cache = map[string]string{}
 	cacheMu.Unlock()

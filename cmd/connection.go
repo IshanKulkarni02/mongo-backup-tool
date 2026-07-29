@@ -10,6 +10,7 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 
 	// Blank-imported so their init() registers each engine with the
 	// registry engine.Lookup below resolves --engine against — same
@@ -107,6 +108,9 @@ var connectionAddCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Saved connection %q\n", name)
+		if !secrets.Available() {
+			fmt.Fprintln(os.Stderr, "Warning:", secrets.UnavailableWarning)
+		}
 		return nil
 	},
 }
@@ -125,6 +129,9 @@ var connectionListCmd = &cobra.Command{
 		}
 		for _, c := range cfg.Connections {
 			fmt.Printf("%-20s %-10s %s\n", c.Name, c.EngineID(), config.RedactURI(c.URI))
+		}
+		if !secrets.Available() {
+			fmt.Fprintln(os.Stderr, "\nWarning:", secrets.UnavailableWarning)
 		}
 		return nil
 	},

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 )
 
 var doctorCmd = &cobra.Command{
@@ -28,6 +29,12 @@ var doctorCmd = &cobra.Command{
 			} else {
 				fmt.Printf("-  %s (optional, for `dbhelm remote`): not found\n", s.Dependency.Name)
 			}
+		}
+
+		if secrets.Available() {
+			fmt.Println("OK system keyring: available (connection passwords are stored encrypted)")
+		} else {
+			fmt.Println("x  system keyring: unavailable —", secrets.UnavailableWarning)
 		}
 
 		if depmanager.AllInstalled(statuses) {
