@@ -157,10 +157,24 @@ func Remove(id string) error {
 	return save(kept)
 }
 
-// MarkRan records that a schedule fired at `at`, advancing its NextRun by
-// one interval from `at` (not from "now"), so a delayed run doesn't cause
-// runs to bunch up.
-func MarkRan(id string, at time.Time) error {
+// BeginRun advances a schedule's NextRun by one interval from `at` (not
+// from "now", so a delayed run doesn't cause runs to bunch up), and must
+// be called *before* the schedule's job itself runs (see cmd/scheduler.go's
+// runDue).
+//
+// Persisting the advance up front, rather than after the job completes,
+// closes a double-fire gap: if the job runner is killed (kill -9, OOM,
+// power loss) after the job finishes but before its completion is
+// recorded, the old design left NextRun unchanged, so the next
+// `scheduler run` still saw the old, already-passed NextRun and fired the
+// very same interval's job again — e.g. a duplicate backup dump or
+// snapshot. With NextRun advanced first, a crash anywhere after this call
+// (including mid-job) can no longer cause that: at worst, a crash between
+// BeginRun and the job actually starting means this one interval's job is
+// silently skipped rather than duplicated, which is the safer failure
+// mode for anything that creates data (a missed backup vs. a duplicate
+// one).
+func BeginRun(id string, at time.Time) error {
 	schedules, err := Load()
 	if err != nil {
 		return err
@@ -173,8 +187,25 @@ func MarkRan(id string, at time.Time) error {
 		if err != nil {
 			return err
 		}
-		schedules[i].LastRun = at.Format(time.RFC3339)
 		schedules[i].NextRun = at.Add(d).Format(time.RFC3339)
+		return save(schedules)
+	}
+	return fmt.Errorf("no schedule with id %q", id)
+}
+
+// MarkRan records that a schedule finished running (successfully or not)
+// starting at `at`. Called *after* the job returns; NextRun is not
+// touched here — BeginRun already advanced it before the job ran.
+func MarkRan(id string, at time.Time) error {
+	schedules, err := Load()
+	if err != nil {
+		return err
+	}
+	for i := range schedules {
+		if schedules[i].ID != id {
+			continue
+		}
+		schedules[i].LastRun = at.Format(time.RFC3339)
 		return save(schedules)
 	}
 	return fmt.Errorf("no schedule with id %q", id)
