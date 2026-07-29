@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy, Download, Upload } from "lucide-react";
+import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy, Download, Upload, ArrowLeft } from "lucide-react";
 import {
   ListConnections,
   TestConnection,
@@ -23,7 +23,10 @@ import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { DataGrid } from "../components/DataGrid";
 import { AiPanel } from "../components/AiPanel";
+import { Select } from "../components/Select";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { useToast } from "../components/Toast";
+import { useUIMode } from "../lib/uiMode";
 import { quoteIdent, sqlLiteral, buildSelectList } from "../lib/sql";
 import "./BrowserView.css";
 import "./TableView.css";
@@ -38,6 +41,8 @@ export function TableView({
   initialTarget?: { connection: string; database: string } | null;
   onConsumeInitialTarget?: () => void;
 } = {}) {
+  const { mode } = useUIMode();
+  const beginner = mode === "beginner";
   // Captured once at mount so a parent clearing initialTarget afterwards
   // (via onConsumeInitialTarget) doesn't affect this already-mounted view.
   const [pendingTarget] = useState(initialTarget ?? null);
@@ -47,7 +52,34 @@ export function TableView({
   const [database, setDatabase] = useState("");
   const [tables, setTables] = useState<main.TableInfo[] | null>(null);
   const [table, setTable] = useState("");
+  // Set when a foreign-key cell is clicked in RowsPanel: narrows the target
+  // table's rows down to the one being referenced, so "clicking a foreign
+  // value" really does jump to that row rather than just naming its table.
+  const [rowFilter, setRowFilter] = useState<{ column: string; cell: engine.Cell } | null>(null);
+  const [navStack, setNavStack] = useState<{ table: string; rowFilter: { column: string; cell: engine.Cell } | null }[]>([]);
   const toast = useToast();
+
+  function selectTable(name: string) {
+    setTable(name);
+    setRowFilter(null);
+    setNavStack([]);
+  }
+
+  function navigateToForeignRow(refTable: string, refColumn: string, cell: engine.Cell) {
+    setNavStack((s) => [...s, { table, rowFilter }]);
+    setTable(refTable);
+    setRowFilter({ column: refColumn, cell });
+  }
+
+  function navigateBack() {
+    setNavStack((s) => {
+      if (s.length === 0) return s;
+      const prev = s[s.length - 1];
+      setTable(prev.table);
+      setRowFilter(prev.rowFilter);
+      return s.slice(0, -1);
+    });
+  }
 
   useEffect(() => {
     ListConnections().then((conns) => {
@@ -92,39 +124,38 @@ export function TableView({
 
   useEffect(() => {
     setTable("");
+    setRowFilter(null);
+    setNavStack([]);
     loadTables();
   }, [loadTables]);
 
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">Tables</h1>
+        <h1 className="view-title">{beginner ? "My Data" : "Tables"}</h1>
       </div>
 
       {connections.length === 0 ? (
         <EmptyState
           icon={<Database size={32} />}
-          title="No SQL connections yet"
-          description="Add a PostgreSQL, MySQL, or SQLite connection to browse tables here."
+          title={beginner ? "No databases yet" : "No SQL connections yet"}
+          description={
+            beginner
+              ? "Connect a database from My Databases to see your data here."
+              : "Add a PostgreSQL, MySQL, or SQLite connection to browse tables here."
+          }
         />
       ) : (
         <>
           <div className="scope-picker">
-            <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-              {connections.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-              <option value="">{activeEngine === "postgres" ? "Select a schema" : "Select a database"}</option>
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <Select value={connection} onChange={setConnection} options={connections.map((c) => ({ value: c.name, label: c.name }))} />
+            <Select
+              value={database}
+              onChange={setDatabase}
+              disabled={databases.length === 0}
+              placeholder={activeEngine === "postgres" ? "Select a schema" : "Select a database"}
+              options={databases.map((d) => ({ value: d, label: d }))}
+            />
           </div>
 
           {connection && database && (
@@ -137,7 +168,7 @@ export function TableView({
                 {tables?.length === 0 && <div className="browser-empty-hint">No tables yet.</div>}
                 {tables?.map((t) => (
                   <div key={t.name} className={`collection-item ${table === t.name ? "active" : ""}`}>
-                    <button className="collection-item-btn" onClick={() => setTable(t.name)}>
+                    <button className="collection-item-btn" onClick={() => selectTable(t.name)}>
                       <span className="collection-name mono">{t.name}</span>
                       <span className="collection-meta">~{t.rowCount} rows</span>
                     </button>
@@ -156,6 +187,11 @@ export function TableView({
                     table={table}
                     engineId={activeEngine}
                     onMutated={loadTables}
+                    rowFilter={rowFilter}
+                    onClearFilter={() => setRowFilter(null)}
+                    canGoBack={navStack.length > 0}
+                    onBack={navigateBack}
+                    onNavigateToForeignRow={navigateToForeignRow}
                   />
                 )}
               </div>
@@ -173,12 +209,22 @@ function RowsPanel({
   table,
   engineId,
   onMutated,
+  rowFilter,
+  onClearFilter,
+  canGoBack,
+  onBack,
+  onNavigateToForeignRow,
 }: {
   connection: string;
   database: string;
   table: string;
   engineId: string;
   onMutated: () => void;
+  rowFilter: { column: string; cell: engine.Cell } | null;
+  onClearFilter: () => void;
+  canGoBack: boolean;
+  onBack: () => void;
+  onNavigateToForeignRow: (refTable: string, refColumn: string, cell: engine.Cell) => void;
 }) {
   const [schema, setSchema] = useState<engine.TableSchema | null>(null);
   const [schemaLoaded, setSchemaLoaded] = useState(false);
@@ -186,7 +232,6 @@ function RowsPanel({
   const [result, setResult] = useState<engine.SQLResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [queryError, setQueryError] = useState("");
-  const [peekRow, setPeekRow] = useState<{ table: string; result: engine.SQLResult | null; error: string } | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [showMockAi, setShowMockAi] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -202,11 +247,16 @@ function RowsPanel({
     // column can be wrapped in ST_AsGeoJSON from the very first query
     // instead of showing raw WKB text and re-fetching a moment later.
     const cols = buildSelectList(engineId, schema?.columns);
-    RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident} LIMIT ${ROW_LIMIT}`)
+    // rowFilter narrows to the single referenced row after a foreign-key
+    // click navigated here — same query shape, just WHERE-qualified.
+    const whereClause = rowFilter
+      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type)}`
+      : "";
+    RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident}${whereClause} LIMIT ${ROW_LIMIT}`)
       .then(setResult)
       .catch((e) => setQueryError(String(e)))
       .finally(() => setLoading(false));
-  }, [connection, database, table, engineId, schema]);
+  }, [connection, database, table, engineId, schema, rowFilter]);
 
   useEffect(() => {
     setSchema(null);
@@ -255,22 +305,31 @@ function RowsPanel({
     }
   }
 
-  async function handleLinkClick(rowIndex: number, column: string, cell: engine.Cell) {
+  function handleLinkClick(rowIndex: number, column: string, cell: engine.Cell) {
     const fk = fkByColumn.get(column);
-    if (!fk || !result) return;
-    setPeekRow({ table: fk.refTable, result: null, error: "" });
-    try {
-      const ident = quoteIdent(engineId, fk.refTable);
-      const whereClause = `${quoteIdent(engineId, fk.refColumn)} = ${sqlLiteral(cell.display, cell.type)}`;
-      const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 1`);
-      setPeekRow({ table: fk.refTable, result: r, error: "" });
-    } catch (e) {
-      setPeekRow({ table: fk.refTable, result: null, error: String(e) });
-    }
+    if (!fk) return;
+    onNavigateToForeignRow(fk.refTable, fk.refColumn, cell);
   }
 
   return (
     <div>
+      {(canGoBack || rowFilter) && (
+        <div className="fk-nav-bar">
+          {canGoBack && (
+            <Button variant="ghost" onClick={onBack}>
+              <ArrowLeft size={14} /> Back
+            </Button>
+          )}
+          {rowFilter && (
+            <span className="fk-filter-chip">
+              Filtered: {rowFilter.column} = {rowFilter.cell.display}
+              <button className="icon-btn" onClick={onClearFilter} title="Clear filter, show all rows">
+                <X size={12} />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
       <div className="query-bar">
         <Button variant="ghost" onClick={runQuery}>
           <RefreshCw size={14} /> Refresh
@@ -337,17 +396,6 @@ function RowsPanel({
           referencingTables={referencingTables}
           pkCell={result.rows[selectedRow][pkColumns[0]]}
         />
-      )}
-
-      {peekRow && (
-        <Modal title={`${peekRow.table} — referenced row`} onClose={() => setPeekRow(null)}>
-          {peekRow.error && <div className="query-error">{peekRow.error}</div>}
-          {!peekRow.error && !peekRow.result && <Skeleton height={120} />}
-          {peekRow.result && peekRow.result.rows.length === 0 && <EmptyState icon={<Database size={24} />} title="Referenced row not found" />}
-          {peekRow.result && peekRow.result.rows.length > 0 && (
-            <DataGrid columns={peekRow.result.columns} rows={peekRow.result.rows} />
-          )}
-        </Modal>
       )}
 
       {showMockAi && (
@@ -437,11 +485,15 @@ function ExportSchemaModal({
     >
       <div className="field">
         <label className="field-label">Format</label>
-        <select className="input" value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
-          <option value="openapi">OpenAPI (YAML)</option>
-          <option value="typescript">TypeScript interface</option>
-          <option value="pydantic">Pydantic model</option>
-        </select>
+        <SegmentedControl
+          value={format}
+          onChange={(v) => setFormat(v as typeof format)}
+          options={[
+            { value: "openapi", label: "OpenAPI (YAML)" },
+            { value: "typescript", label: "TypeScript" },
+            { value: "pydantic", label: "Pydantic" },
+          ]}
+        />
       </div>
       {loading ? <Skeleton height={160} /> : <pre className="ai-output mono">{code}</pre>}
     </Modal>
@@ -555,18 +607,12 @@ function ImportCSVModal({
               <div key={c.name} className="webhook-mapping-row">
                 <span className="mono">{c.name}</span>
                 <span className="webhook-mapping-arrow">←</span>
-                <select
-                  className="input"
+                <Select
                   value={mapping[c.name] ?? ""}
-                  onChange={(e) => setMapping((m) => ({ ...m, [c.name]: e.target.value }))}
-                >
-                  <option value="">(skip)</option>
-                  {header.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
+                  placeholder="(skip)"
+                  options={header.map((h) => ({ value: h, label: h }))}
+                />
               </div>
             ))}
           </div>

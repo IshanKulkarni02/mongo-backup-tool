@@ -10,6 +10,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { useJobUpdates, Job } from "../hooks/useJobs";
+import { Select } from "../components/Select";
 import "./BackupsView.css";
 
 function humanSize(n: number): string {
@@ -214,24 +215,21 @@ function CreateBackupModal({ onClose, onCreated }: { onClose: () => void; onCrea
     >
       <div className="field">
         <label className="field-label">Connection</label>
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: c.name }))}
+          placeholder="Select a connection"
+          disabled={connections.length === 0}
+        />
       </div>
       <div className="field">
         <label className="field-label">Database</label>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)}>
-          <option value="">All databases</option>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={[{ value: "", label: "All databases" }, ...databases.map((d) => ({ value: d, label: d }))]}
+        />
       </div>
     </Modal>
   );

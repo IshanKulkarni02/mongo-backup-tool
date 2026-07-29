@@ -20,6 +20,7 @@ import { Input } from "../components/Input";
 import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { JsonTree } from "../components/JsonTree";
+import { Select } from "../components/Select";
 import { useToast } from "../components/Toast";
 import { quoteIdent, sqlLiteral } from "../lib/sql";
 import "./BrowserView.css";
@@ -293,36 +294,30 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       {parseError && <div className="query-error">{parseError}</div>}
       <div className="field">
         <label className="field-label">Connection</label>
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name} ({c.engine})
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: `${c.name} (${c.engine})` }))}
+        />
       </div>
       <div className="field">
         <label className="field-label">{activeEngine === "postgres" ? "Schema" : "Database"}</label>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)}>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={databases.map((d) => ({ value: d, label: d }))}
+        />
       </div>
 
       {isMongo && (
         <div className="field">
           <label className="field-label">Collection</label>
-          <select className="input" value={collection} onChange={(e) => setCollection(e.target.value)}>
-            <option value="">Select a collection</option>
-            {collections.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={collection}
+            onChange={setCollection}
+            options={collections.map((c) => ({ value: c.name, label: c.name }))}
+            placeholder="Select a collection"
+          />
         </div>
       )}
 
@@ -330,14 +325,12 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
         <>
           <div className="field">
             <label className="field-label">Table</label>
-            <select className="input" value={table} onChange={(e) => setTable(e.target.value)}>
-              <option value="">Select a table</option>
-              {tables.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={table}
+              onChange={setTable}
+              options={tables.map((t) => ({ value: t.name, label: t.name }))}
+              placeholder="Select a table"
+            />
           </div>
           {schema && fieldKeys.length === 0 && (
             <div className="query-error">This payload has no top-level fields to map (it may be an array or empty object).</div>
@@ -350,18 +343,12 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
                   <div key={c.name} className="webhook-mapping-row">
                     <span className="mono">{c.name}</span>
                     <span className="webhook-mapping-arrow">←</span>
-                    <select
-                      className="input"
+                    <Select
                       value={mapping[c.name] ?? ""}
-                      onChange={(e) => setMapping((m) => ({ ...m, [c.name]: e.target.value }))}
-                    >
-                      <option value="">(skip)</option>
-                      {fieldKeys.map((k) => (
-                        <option key={k} value={k}>
-                          {k}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
+                      options={fieldKeys.map((k) => ({ value: k, label: k }))}
+                      placeholder="(skip)"
+                    />
                   </div>
                 ))}
               </div>

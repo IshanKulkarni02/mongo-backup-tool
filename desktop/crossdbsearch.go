@@ -57,7 +57,7 @@ func (a *App) crossDatabaseSearch(ctx context.Context, jobID, term string) ([]Cr
 	if err != nil {
 		return nil, err
 	}
-	var matches []CrossSearchMatch
+	matches := []CrossSearchMatch{}
 	total := int64(len(cfg.Connections))
 	for i, conn := range cfg.Connections {
 		select {
@@ -101,7 +101,7 @@ func (a *App) crossDatabaseSearch(ctx context.Context, jobID, term string) ([]Cr
 }
 
 func searchSQLNamespaces(ctx context.Context, sess engine.SQLSession, engineID, connName, database string, namespaces []engine.NamespaceInfo, term string) []CrossSearchMatch {
-	var out []CrossSearchMatch
+	out := []CrossSearchMatch{}
 	pattern := "'%" + strings.ReplaceAll(term, "'", "''") + "%'"
 	for _, ns := range namespaces {
 		select {
@@ -169,7 +169,7 @@ func previewRow(row map[string]engine.Cell, columns []engine.Column) string {
 // collection, rather than paginating through every document and grepping
 // client-side.
 func searchDocumentNamespaces(ctx context.Context, sess engine.DocumentSession, engineID, connName, database string, namespaces []engine.NamespaceInfo, term string) []CrossSearchMatch {
-	var out []CrossSearchMatch
+	out := []CrossSearchMatch{}
 	escapedTerm := regexp.QuoteMeta(term)
 	for _, ns := range namespaces {
 		select {

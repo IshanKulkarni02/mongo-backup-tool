@@ -124,7 +124,7 @@ func (s *Session) ListDatabases(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -158,7 +158,7 @@ func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine
 		return nil, err
 	}
 	defer rows.Close()
-	var out []engine.NamespaceInfo
+	out := []engine.NamespaceInfo{}
 	for rows.Next() {
 		var info engine.NamespaceInfo
 		if err := rows.Scan(&info.Name, &info.DocCount, &info.StorageSize); err != nil {
@@ -292,7 +292,7 @@ func (s *Session) ListTableIndexes(ctx context.Context, database, table string) 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []engine.IndexDef
+	out := []engine.IndexDef{}
 	for rows.Next() {
 		var d engine.IndexDef
 		if err := rows.Scan(&d.Name, &d.DDL); err != nil {

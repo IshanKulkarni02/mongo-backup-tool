@@ -1,0 +1,148 @@
+.select-root {
+  position: relative;
+  width: 100%;
+}
+
+.select-trigger {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  cursor: pointer;
+  text-align: left;
+  font-size: inherit;
+}
+
+.select-trigger:hover:not(.disabled) {
+  background: var(--color-bg-subtle);
+}
+
+.select-trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.select-trigger.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.select-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-trigger-label.placeholder {
+  color: var(--color-text-muted);
+}
+
+.select-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--duration-fast) ease;
+}
+
+.select-chevron.open {
+  transform: rotate(180deg);
+}
+
+.select-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: var(--z-overlay);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  min-width: 200px;
+}
+
+.select-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.select-search-input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-size: var(--text-body);
+}
+
+.select-search-input:focus {
+  outline: none;
+}
+
+.select-list {
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+}
+
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--text-body);
+}
+
+.select-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-option.highlighted {
+  background: var(--color-bg-subtle);
+}
+
+.select-option.selected {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.select-option:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.select-option-meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  font-weight: 400;
+  flex-shrink: 0;
+}
+
+.select-empty {
+  padding: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  text-align: center;
+}

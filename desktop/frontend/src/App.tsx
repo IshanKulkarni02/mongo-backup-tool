@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState, type PropsWithChildren } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type PropsWithChildren } from "react";
 import {
   Database,
   GitBranch,
@@ -16,18 +16,23 @@ import {
   Cloud,
   Network,
   Search,
+  GraduationCap,
+  Code2,
 } from "lucide-react";
 import "./App.css";
 import { ToastProvider, useToast } from "./components/Toast";
+import { UIModeProvider, useUIMode } from "./lib/uiMode";
 import { useJobUpdates, Job } from "./hooks/useJobs";
 import { DependencyModal } from "./components/DependencyModal";
 import { CommandPalette, type CommandPaletteItem } from "./components/CommandPalette";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Skeleton } from "./components/Skeleton";
 import { ConnectionsView } from "./views/ConnectionsView";
 import { SnapshotsView } from "./views/SnapshotsView";
 import { BackupsView } from "./views/BackupsView";
 import { BrowserView } from "./views/BrowserView";
 import { TableView } from "./views/TableView";
+import { BeginnerOverviewView } from "./views/BeginnerOverviewView";
 import { VectorToolView } from "./views/VectorToolView";
 import { WebhookView } from "./views/WebhookView";
 import { ListConnections } from "../wailsjs/go/main/App";
@@ -79,14 +84,26 @@ type View =
 // Dashboard) and always show.
 type CapKey = "sql" | "documents" | "aggregation" | "snapshots";
 
-const NAV: { id: View; label: string; icon: typeof Database; requires?: CapKey }[] = [
-  { id: "connections", label: "Connections", icon: Database },
-  { id: "browser", label: "Browser", icon: Table2, requires: "documents" },
-  { id: "tables", label: "Tables", icon: Grid3x3, requires: "sql" },
+// beginnerVisible marks the handful of nav items a total non-technical
+// user needs (view their data, connect a database, see an overview).
+// Everything else is a technical/power-user tool and only shows once the
+// sidebar's Beginner/Pro switch is flipped to Pro. beginnerLabel swaps in
+// plain-language wording for the items that do stay visible.
+const NAV: {
+  id: View;
+  label: string;
+  beginnerLabel?: string;
+  icon: typeof Database;
+  requires?: CapKey;
+  beginnerVisible?: boolean;
+}[] = [
+  { id: "connections", label: "Connections", beginnerLabel: "My Databases", icon: Database, beginnerVisible: true },
+  { id: "browser", label: "Browser", beginnerLabel: "My Data", icon: Table2, requires: "documents", beginnerVisible: true },
+  { id: "tables", label: "Tables", beginnerLabel: "My Data", icon: Grid3x3, requires: "sql", beginnerVisible: true },
+  { id: "dashboard", label: "Dashboard", beginnerLabel: "Overview", icon: LayoutDashboard, beginnerVisible: true },
   { id: "erdiagram", label: "ER Diagram", icon: Network, requires: "sql" },
   { id: "query", label: "Query", icon: Terminal, requires: "sql" },
   { id: "pipeline", label: "Pipeline", icon: Workflow, requires: "aggregation" },
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "crosssearch", label: "Cross-Database Search", icon: Search },
   { id: "schemadiff", label: "Schema Diff", icon: GitCompare, requires: "sql" },
   { id: "ai", label: "AI", icon: Sparkles },
@@ -124,7 +141,18 @@ function AppShell() {
     new Set(["sql", "documents", "aggregation", "snapshots"])
   );
   const [openTarget, setOpenTarget] = useState<OpenTarget>(null);
+  const { mode, setMode } = useUIMode();
   const toast = useToast();
+  const mainRef = useRef<HTMLElement>(null);
+
+  // The <main> scroll container persists across view switches (only its
+  // children remount), so without this a view opened while scrolled deep
+  // into the previous one would render already scrolled past its own header
+  // — main's scroll position is independent of the sidebar's, but it still
+  // needs to reset per-view on its own.
+  useEffect(() => {
+    mainRef.current?.scrollTo(0, 0);
+  }, [view]);
 
   // Documents-capable connections (Mongo) open in Browser, SQL-capable ones
   // open in Tables — mirrors the capability-gated NAV entries above.
@@ -172,11 +200,16 @@ function AppShell() {
       });
   }, [view]);
 
-  const visibleNav = NAV.filter((item) => !item.requires || availableCaps.has(item.requires));
+  const visibleNav = NAV.filter(
+    (item) => (!item.requires || availableCaps.has(item.requires)) && (mode === "pro" || item.beginnerVisible)
+  );
+
+  const activeNavItem = NAV.find((item) => item.id === view);
+  const currentLabel = mode === "beginner" ? activeNavItem?.beginnerLabel ?? activeNavItem?.label : activeNavItem?.label;
 
   const paletteItems: CommandPaletteItem[] = visibleNav.map((item) => ({
     id: item.id,
-    label: item.label,
+    label: mode === "beginner" ? item.beginnerLabel ?? item.label : item.label,
     icon: item.icon,
     onSelect: () => setView(item.id),
   }));
@@ -194,79 +227,100 @@ function AppShell() {
     <div className="shell">
       <nav className="sidebar">
         <div className="sidebar-title">DBHelm</div>
-        {visibleNav.map(({ id, label, icon: Icon }) => (
+        <div className="sidebar-nav-items">
+          {visibleNav.map(({ id, label, beginnerLabel, icon: Icon }) => (
+            <button
+              key={id}
+              className={`nav-item ${view === id ? "active" : ""}`}
+              onClick={() => setView(id)}
+            >
+              <Icon size={16} />
+              {mode === "beginner" ? beginnerLabel ?? label : label}
+            </button>
+          ))}
+        </div>
+        <div className="mode-switch" role="radiogroup" aria-label="Experience level">
           <button
-            key={id}
-            className={`nav-item ${view === id ? "active" : ""}`}
-            onClick={() => setView(id)}
+            className={`mode-switch-btn ${mode === "beginner" ? "active" : ""}`}
+            onClick={() => setMode("beginner")}
+            title="Beginner mode — plain language, only the essentials"
           >
-            <Icon size={16} />
-            {label}
+            <GraduationCap size={14} /> Beginner
           </button>
-        ))}
+          <button
+            className={`mode-switch-btn ${mode === "pro" ? "active" : ""}`}
+            onClick={() => setMode("pro")}
+            title="Pro mode — every tool, technical terms"
+          >
+            <Code2 size={14} /> Pro
+          </button>
+        </div>
       </nav>
-      <main className="main">
-        {view === "connections" && <ConnectionsView onOpenDatabase={handleOpenDatabase} />}
-        {view === "browser" && (
-          <BrowserView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
-        )}
-        {view === "tables" && (
-          <TableView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
-        )}
-        {view === "query" && (
-          <ViewSuspense>
-            <QueryView />
-          </ViewSuspense>
-        )}
-        {view === "pipeline" && (
-          <ViewSuspense>
-            <PipelineView />
-          </ViewSuspense>
-        )}
-        {view === "dashboard" && (
-          <ViewSuspense>
-            <DashboardView />
-          </ViewSuspense>
-        )}
-        {view === "schemadiff" && (
-          <ViewSuspense>
-            <SchemaDiffView />
-          </ViewSuspense>
-        )}
-        {view === "ai" && (
-          <ViewSuspense>
-            <AISettingsView />
-          </ViewSuspense>
-        )}
-        {view === "vector" && <VectorToolView />}
-        {view === "geo" && (
-          <ViewSuspense>
-            <GeoView />
-          </ViewSuspense>
-        )}
-        {view === "rules" && (
-          <ViewSuspense>
-            <RulesView />
-          </ViewSuspense>
-        )}
-        {view === "webhook" && <WebhookView />}
-        {view === "snapshots" && <SnapshotsView />}
-        {view === "backups" && <BackupsView />}
-        {view === "remotesync" && (
-          <ViewSuspense>
-            <RemoteSyncView />
-          </ViewSuspense>
-        )}
-        {view === "erdiagram" && (
-          <ViewSuspense>
-            <ERDiagramView />
-          </ViewSuspense>
-        )}
-        {view === "crosssearch" && (
-          <ViewSuspense>
-            <CrossSearchView />
-          </ViewSuspense>
-        )}
+      <main className="main" ref={mainRef}>
+        <ErrorBoundary key={view} label={currentLabel}>
+          {view === "connections" && <ConnectionsView onOpenDatabase={handleOpenDatabase} />}
+          {view === "browser" && (
+            <BrowserView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
+          )}
+          {view === "tables" && (
+            <TableView initialTarget={openTarget} onConsumeInitialTarget={() => setOpenTarget(null)} />
+          )}
+          {view === "query" && (
+            <ViewSuspense>
+              <QueryView />
+            </ViewSuspense>
+          )}
+          {view === "pipeline" && (
+            <ViewSuspense>
+              <PipelineView />
+            </ViewSuspense>
+          )}
+          {view === "dashboard" && mode === "beginner" && <BeginnerOverviewView onOpenDatabase={handleOpenDatabase} />}
+          {view === "dashboard" && mode === "pro" && (
+            <ViewSuspense>
+              <DashboardView />
+            </ViewSuspense>
+          )}
+          {view === "schemadiff" && (
+            <ViewSuspense>
+              <SchemaDiffView />
+            </ViewSuspense>
+          )}
+          {view === "ai" && (
+            <ViewSuspense>
+              <AISettingsView />
+            </ViewSuspense>
+          )}
+          {view === "vector" && <VectorToolView />}
+          {view === "geo" && (
+            <ViewSuspense>
+              <GeoView />
+            </ViewSuspense>
+          )}
+          {view === "rules" && (
+            <ViewSuspense>
+              <RulesView />
+            </ViewSuspense>
+          )}
+          {view === "webhook" && <WebhookView />}
+          {view === "snapshots" && <SnapshotsView />}
+          {view === "backups" && <BackupsView />}
+          {view === "remotesync" && (
+            <ViewSuspense>
+              <RemoteSyncView />
+            </ViewSuspense>
+          )}
+          {view === "erdiagram" && (
+            <ViewSuspense>
+              <ERDiagramView />
+            </ViewSuspense>
+          )}
+          {view === "crosssearch" && (
+            <ViewSuspense>
+              <CrossSearchView />
+            </ViewSuspense>
+          )}
+        </ErrorBoundary>
       </main>
       {!depsResolved && <DependencyModal onResolved={() => setDepsResolved(true)} />}
       <CommandPalette items={paletteItems} />
@@ -276,8 +330,12 @@ function AppShell() {
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AppShell />
-    </ToastProvider>
+    <ErrorBoundary label="DBHelm">
+      <UIModeProvider>
+        <ToastProvider>
+          <AppShell />
+        </ToastProvider>
+      </UIModeProvider>
+    </ErrorBoundary>
   );
 }

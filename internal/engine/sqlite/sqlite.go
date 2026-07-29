@@ -92,7 +92,7 @@ func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine
 	if err != nil {
 		return nil, err
 	}
-	var names []string
+	names := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -234,7 +234,7 @@ func (s *Session) ListTableIndexes(ctx context.Context, database, table string) 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []engine.IndexDef
+	out := []engine.IndexDef{}
 	for rows.Next() {
 		var d engine.IndexDef
 		if err := rows.Scan(&d.Name, &d.DDL); err != nil {

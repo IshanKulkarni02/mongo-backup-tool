@@ -1,0 +1,96 @@
+.overview-totals {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.overview-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.overview-stat-value {
+  font-size: var(--text-h1);
+  font-weight: 700;
+}
+
+.overview-stat-label {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.overview-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.overview-conn-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.overview-conn-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.overview-engine-badge {
+  font-weight: 500;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.overview-empty-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
+.overview-error {
+  color: var(--color-danger);
+  font-size: var(--text-label);
+}
+
+.overview-db-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.overview-db-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+
+.overview-db-row:hover {
+  background: var(--color-border);
+  border-color: var(--color-border-strong);
+}
+
+.overview-db-name {
+  font-weight: 500;
+}
+
+.overview-db-meta {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}

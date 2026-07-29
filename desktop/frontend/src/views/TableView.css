@@ -4,6 +4,25 @@
   align-self: center;
 }
 
+.fk-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.fk-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
 .relationship-inspector {
   margin-top: var(--space-3);
   border: 1px solid var(--color-border);

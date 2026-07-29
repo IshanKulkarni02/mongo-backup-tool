@@ -77,7 +77,7 @@ func (a *App) ListReferencingTables(connectionName, database, table string) ([]I
 		return nil, err
 	}
 
-	var out []IncomingForeignKey
+	out := []IncomingForeignKey{}
 	for _, ns := range namespaces {
 		if ns.Name == table {
 			continue

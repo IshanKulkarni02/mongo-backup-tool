@@ -130,6 +130,20 @@
   font-size: var(--text-label);
 }
 
+.conn-dbs-loading {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.field-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+}
+
 .conn-db-chip {
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);

@@ -34,6 +34,9 @@ func (a *App) ListSavedQueries() ([]dashboard.SavedQuery, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.SavedQueries == nil {
+		return []dashboard.SavedQuery{}, nil
+	}
 	return s.SavedQueries, nil
 }
 
@@ -95,6 +98,9 @@ func (a *App) ListWidgets() ([]dashboard.Widget, error) {
 	s, err := dashboardStore()
 	if err != nil {
 		return nil, err
+	}
+	if s.Widgets == nil {
+		return []dashboard.Widget{}, nil
 	}
 	return s.Widgets, nil
 }

@@ -16,6 +16,7 @@ import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
+import { SegmentedControl } from "../components/SegmentedControl";
 import "./AISettingsView.css";
 
 const PROVIDERS = [
@@ -70,13 +71,12 @@ export function AISettingsView() {
         <h2 className="ai-settings-section-title">Provider</h2>
         <div className="field">
           <label className="field-label">Provider</label>
-          <select className="input" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+          <SegmentedControl
+            value={providerId}
+            onChange={setProviderId}
+            options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))}
+            ariaLabel="Provider"
+          />
         </div>
         <Input
           label="Model"

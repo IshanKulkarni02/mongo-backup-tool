@@ -13,6 +13,7 @@ import { main } from "../../wailsjs/go/models";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
+import { Select } from "../components/Select";
 import { EmptyState } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
 import "./RemoteSyncView.css";
@@ -73,21 +74,18 @@ export function RemoteSyncView() {
       ) : (
         <>
           <div className="scope-picker">
-            <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-              {connections.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-              <option value="">Select a database</option>
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={connection}
+              onChange={setConnection}
+              options={connections.map((c) => ({ value: c.name, label: c.name }))}
+            />
+            <Select
+              value={database}
+              onChange={setDatabase}
+              options={databases.map((d) => ({ value: d, label: d }))}
+              placeholder="Select a database"
+              disabled={databases.length === 0}
+            />
           </div>
 
           {connection && database && initialized === false && (

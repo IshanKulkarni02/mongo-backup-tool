@@ -94,7 +94,7 @@ func (s *Store) Clear() {
 // connection, if connection is empty), newest first, capped at limit (0
 // means no cap).
 func (s *Store) List(connection string, limit int) []Entry {
-	var out []Entry
+	out := []Entry{}
 	for _, e := range s.Entries {
 		if connection != "" && e.Connection != connection {
 			continue

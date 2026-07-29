@@ -18,6 +18,7 @@ import { Input } from "../components/Input";
 import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Select } from "../components/Select";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { useJobUpdates, Job } from "../hooks/useJobs";
@@ -113,22 +114,19 @@ export function SnapshotsView() {
       </div>
 
       <div className="scope-picker">
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.length === 0 && <option value="">No connections</option>}
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-          <option value="">Select a database</option>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: c.name }))}
+          placeholder="No connections"
+        />
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={databases.map((d) => ({ value: d, label: d }))}
+          placeholder="Select a database"
+          disabled={databases.length === 0}
+        />
       </div>
 
       {connection && database && (
@@ -255,22 +253,20 @@ function CompareBar({
     <div className="compare-bar">
       <GitCompare size={16} />
       <span>Compare</span>
-      <select className="input" value={from} onChange={(e) => onFrom(e.target.value)}>
-        {snapshots.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.id.slice(0, 8)} — {s.createdAt}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={from}
+        onChange={onFrom}
+        options={snapshots.map((s) => ({ value: s.id, label: `${s.id.slice(0, 8)} — ${s.createdAt}` }))}
+      />
       <span>vs.</span>
-      <select className="input" value={to} onChange={(e) => onTo(e.target.value)}>
-        {allowLive && <option value="">Live database</option>}
-        {snapshots.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.id.slice(0, 8)} — {s.createdAt}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={to}
+        onChange={onTo}
+        options={[
+          ...(allowLive ? [{ value: "", label: "Live database" }] : []),
+          ...snapshots.map((s) => ({ value: s.id, label: `${s.id.slice(0, 8)} — ${s.createdAt}` })),
+        ]}
+      />
     </div>
   );
 }

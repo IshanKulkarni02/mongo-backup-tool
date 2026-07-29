@@ -11,6 +11,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-height: 0;
 }
 
 .sidebar-title {
@@ -18,6 +19,19 @@
   font-size: var(--text-h2);
   padding: 0 var(--space-2) var(--space-3);
   letter-spacing: -0.01em;
+  flex-shrink: 0;
+}
+
+/* Scrolls independently so a long nav list (Pro mode) can never push the
+   mode switch below — the switch must stay reachable no matter how many
+   items are visible or how short the window is. */
+.sidebar-nav-items {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .nav-item {
@@ -46,6 +60,37 @@
   color: var(--color-accent);
   border-left-color: var(--color-accent);
   background: var(--color-surface);
+}
+
+.mode-switch {
+  flex-shrink: 0;
+  display: flex;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
+}
+
+.mode-switch-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: var(--space-1) 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-label);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-switch-btn.active {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
 }
 
 .main {
