@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
@@ -26,30 +28,30 @@ func TestGenerateOpenAPI(t *testing.T) {
 	got := GenerateOpenAPI(sampleSchema(), "")
 	want := `components:
   schemas:
-    Users:
+    "Users":
       type: object
       properties:
-        id:
+        "id":
           type: integer
-          description: (primary key)
-        email:
+          description: "(primary key)"
+        "email":
           type: string
-        bio:
+        "bio":
           type: string
-        signup_count:
+        "signup_count":
           type: number
-        is_active:
+        "is_active":
           type: boolean
-        created_at:
+        "created_at":
           type: string
           format: date-time
-        metadata:
+        "metadata":
           type: object
       required:
-        - id
-        - email
-        - is_active
-        - created_at
+        - "id"
+        - "email"
+        - "is_active"
+        - "created_at"
 `
 	if got != want {
 		t.Fatalf("unexpected OpenAPI output:\ngot:\n%s\nwant:\n%s", got, want)
@@ -58,8 +60,48 @@ func TestGenerateOpenAPI(t *testing.T) {
 
 func TestGenerateOpenAPICustomName(t *testing.T) {
 	got := GenerateOpenAPI(sampleSchema(), "UserAccount")
-	if !strings.Contains(got, "UserAccount:") {
+	if !strings.Contains(got, `"UserAccount":`) {
 		t.Fatalf("expected custom schema name to be used, got:\n%s", got)
+	}
+}
+
+// TestGenerateOpenAPIEscapesInjectionAttempt is the regression test for
+// #75: a column name containing YAML-structural characters (a colon, a
+// newline that could inject a bogus sibling key) must not be able to
+// alter the generated document's structure. Verified two ways: the
+// output actually parses as YAML (an unescaped injection would either
+// fail to parse or parse into a structure with extra/altered keys), and
+// the parsed structure has exactly the fields this table should produce
+// — no injected "admin" key, no altered nesting.
+func TestGenerateOpenAPIEscapesInjectionAttempt(t *testing.T) {
+	schema := engine.TableSchema{
+		Name: "t",
+		Columns: []engine.Column{
+			{Name: "foo\n    admin: true", DataType: "TEXT", Nullable: true},
+		},
+	}
+	got := GenerateOpenAPI(schema, "")
+
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(got), &doc); err != nil {
+		t.Fatalf("generated OpenAPI YAML failed to parse: %v\noutput:\n%s", err, got)
+	}
+
+	components, _ := doc["components"].(map[string]any)
+	schemas, _ := components["schemas"].(map[string]any)
+	tSchema, _ := schemas["T"].(map[string]any)
+	properties, _ := tSchema["properties"].(map[string]any)
+
+	if len(properties) != 1 {
+		t.Fatalf("expected exactly 1 property (the malicious column name treated as one literal string key), got %d: %+v", len(properties), properties)
+	}
+	if _, injected := properties["admin"]; injected {
+		t.Fatalf("column name injected a sibling \"admin\" key into properties: %+v", properties)
+	}
+	for k := range properties {
+		if !strings.Contains(k, "admin: true") {
+			t.Fatalf("expected the property key to contain the full literal column name, got %q", k)
+		}
 	}
 }
 
