@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
 	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
@@ -54,7 +54,10 @@ func RunRestore(backupID, connName, targetDB string, drop bool) error {
 		return fmt.Errorf("no backup with id %q (see: dbhelm list)", backupID)
 	}
 
-	archivePath := filepath.Join(backupsDir, bk.FileName)
+	archivePath, err := pathsafety.SafeJoin(backupsDir, bk.FileName)
+	if err != nil {
+		return err
+	}
 
 	target := targetDB
 	if target == "" {
