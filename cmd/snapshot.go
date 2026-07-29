@@ -48,11 +48,16 @@ func openSQLSession(conn *config.Connection) (engine.SQLSession, func(), error) 
 		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
 	}
 	if conn.SSHHost != "" {
+		knownHosts, err := config.SSHKnownHostsPath()
+		if err != nil {
+			return nil, nil, err
+		}
 		connCfg.SSHTunnel = &tunnel.Config{
-			Host:          conn.SSHHost,
-			User:          conn.SSHUser,
-			Password:      conn.SSHPassword,
-			PrivateKeyPEM: conn.SSHPrivateKey,
+			Host:           conn.SSHHost,
+			User:           conn.SSHUser,
+			Password:       conn.SSHPassword,
+			PrivateKeyPEM:  conn.SSHPrivateKey,
+			KnownHostsPath: knownHosts,
 		}
 	}
 	sess, err := eng.Open(context.Background(), connCfg)

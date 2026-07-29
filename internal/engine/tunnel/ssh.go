@@ -6,8 +6,11 @@ package tunnel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -26,10 +29,16 @@ type Config struct {
 	// PrivateKeyPassphrase decrypts PrivateKeyPEM if it's an encrypted key.
 	PrivateKeyPassphrase string
 	// HostKeyFingerprint pins the expected host key (base64 SHA256, the
-	// same format `ssh-keygen -lf -E sha256` prints). Left empty, the
-	// tunnel accepts any host key — acceptable for a first connection in a
-	// trusted network, but callers should surface this as a warning.
+	// same format `ssh-keygen -lf -E sha256` prints). Takes precedence over
+	// KnownHostsPath when set.
 	HostKeyFingerprint string
+	// KnownHostsPath is where trust-on-first-use host key fingerprints are
+	// recorded (see tofuHostKeyCallback), used when HostKeyFingerprint
+	// isn't set. Left empty (with HostKeyFingerprint also empty), the
+	// tunnel falls back to accepting any host key with no verification at
+	// all — every real caller should set this; it's only ever empty in
+	// tests that don't care about host-key behavior.
+	KnownHostsPath string
 }
 
 const dialTimeout = 10 * time.Second
@@ -56,7 +65,7 @@ func Open(ctx context.Context, cfg Config) (*Tunnel, error) {
 	clientCfg := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            []ssh.AuthMethod{auth},
-		HostKeyCallback: hostKeyCallback(cfg.HostKeyFingerprint),
+		HostKeyCallback: hostKeyCallback(cfg, host),
 		Timeout:         dialTimeout,
 	}
 
@@ -94,10 +103,24 @@ func authMethod(cfg Config) (ssh.AuthMethod, error) {
 	return nil, fmt.Errorf("SSH tunnel requires a password or private key")
 }
 
-func hostKeyCallback(fingerprint string) ssh.HostKeyCallback {
-	if fingerprint == "" {
-		return ssh.InsecureIgnoreHostKey()
+// hostKeyCallback picks the strongest verification available: an exact
+// pinned fingerprint if the caller configured one, otherwise trust-on-
+// first-use (TOFU) against a local known-hosts file if the caller
+// configured a path for one, otherwise — only when neither is set —
+// falling back to accepting any host key with zero verification. Every
+// real call site in this codebase sets KnownHostsPath, so the last case
+// only applies to tests that don't care about host-key behavior.
+func hostKeyCallback(cfg Config, host string) ssh.HostKeyCallback {
+	if cfg.HostKeyFingerprint != "" {
+		return pinnedHostKeyCallback(cfg.HostKeyFingerprint)
 	}
+	if cfg.KnownHostsPath != "" {
+		return tofuHostKeyCallback(cfg.KnownHostsPath, host)
+	}
+	return ssh.InsecureIgnoreHostKey()
+}
+
+func pinnedHostKeyCallback(fingerprint string) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		got := ssh.FingerprintSHA256(key)
 		if got != fingerprint {
@@ -105,6 +128,64 @@ func hostKeyCallback(fingerprint string) ssh.HostKeyCallback {
 		}
 		return nil
 	}
+}
+
+// tofuHostKeyCallback implements trust-on-first-use host key pinning: the
+// first time a host is seen, its key fingerprint is recorded to
+// knownHostsPath and the connection is allowed — the same trust moment
+// every SSH client and browser TLS-TOFU flow accepts, and the practical
+// middle ground between "warn but always allow" (no real protection) and
+// "refuse to connect until a fingerprint is pre-configured" (unusable
+// without UI/CLI plumbing for every connection). Every subsequent
+// connection to that host must present the exact same key or the
+// connection is refused outright — this is what actually closes the MITM
+// gap InsecureIgnoreHostKey left wide open: an attacker impersonating a
+// host the user has already connected to before is now caught.
+func tofuHostKeyCallback(knownHostsPath, host string) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		got := ssh.FingerprintSHA256(key)
+		hosts, err := loadKnownHosts(knownHostsPath)
+		if err != nil {
+			return fmt.Errorf("reading SSH known-hosts file %s: %w", knownHostsPath, err)
+		}
+		if want, ok := hosts[host]; ok {
+			if got != want {
+				return fmt.Errorf("SSH host key for %s has changed (was %s, now %s) — this could mean someone is intercepting your connection, or the server was legitimately reconfigured/reinstalled; if you're certain it's the latter, remove %s's entry from %s and reconnect", host, want, got, host, knownHostsPath)
+			}
+			return nil
+		}
+		hosts[host] = got
+		if err := saveKnownHosts(knownHostsPath, hosts); err != nil {
+			return fmt.Errorf("recording SSH host key for %s: %w", host, err)
+		}
+		return nil
+	}
+}
+
+func loadKnownHosts(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var hosts map[string]string
+	if err := json.Unmarshal(data, &hosts); err != nil {
+		return nil, err
+	}
+	return hosts, nil
+}
+
+func saveKnownHosts(path string, hosts map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(hosts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 // DialContext opens a connection to addr (the database's address) through

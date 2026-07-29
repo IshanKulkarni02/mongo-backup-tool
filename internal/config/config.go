@@ -134,6 +134,17 @@ func BackupsDir() (string, error) {
 	return b, nil
 }
 
+// SSHKnownHostsPath returns where SSH tunnel host-key fingerprints are
+// recorded for trust-on-first-use verification (see
+// internal/engine/tunnel's Config.KnownHostsPath).
+func SSHKnownHostsPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ssh_known_hosts.json"), nil
+}
+
 func filePath() (string, error) {
 	dir, err := Dir()
 	if err != nil {
