@@ -8,10 +8,12 @@ and git-like **snapshots** — content-addressed, deduped, diffable,
 tag-able history — for lightweight, frequent checkpoints you can roll back to
 in seconds.
 
-It has two interfaces today — a scriptable CLI and an interactive,
-arrow-key-driven terminal UI — and a native Mac/Windows/Linux desktop app is
-on the roadmap (see [Roadmap](#roadmap)). All interfaces share the same
-core, so nothing behaves differently between them.
+It ships as three interfaces over the same core, so nothing behaves
+differently between them: a scriptable **CLI**, an interactive
+arrow-key-driven **terminal UI**, and a native Mac/Windows/Linux **desktop
+app** (see [Desktop app](#desktop-app)). None of the desktop app's builds
+are code-signed yet — see [Distribution](#distribution) for what that means
+on first launch.
 
 ## Table of contents
 
@@ -20,6 +22,7 @@ core, so nothing behaves differently between them.
 - [Prerequisites: MongoDB Database Tools](#prerequisites-mongodb-database-tools)
 - [Getting started](#getting-started)
 - [Interactive mode (TUI)](#interactive-mode-tui)
+- [Desktop app](#desktop-app)
 - [In-tool guide](#in-tool-guide)
 - [Connections](#connections)
 - [Classic backups](#classic-backups)
@@ -50,7 +53,9 @@ restoring an entire multi-GB archive. mongobak covers both ends:
 
 ## Install
 
-Requires [Go](https://go.dev) 1.21+.
+Requires [Go](https://go.dev) 1.26+ (matches `go.mod`/CI exactly; Go's
+automatic toolchain management will fetch it for you if your installed
+version is older).
 
 ```bash
 git clone https://github.com/IshanKulkarni02/mongo-backup-tool.git
@@ -143,6 +148,28 @@ an action menu (snapshot create/history/diff/restore, backup create/list/restore
 always show an explicit confirm screen first, and — same as the CLI — an
 in-place snapshot restore automatically takes a safety snapshot before
 touching anything.
+
+## Desktop app
+
+A native Mac/Windows/Linux desktop app (Wails v2 + React/TypeScript) covers
+the same connection/backup/snapshot workflows with a full GUI:
+
+- **Connections** — add, test, and manage saved connections.
+- **Snapshot timeline** — browse history per database, create/tag/restore
+  snapshots, and view diffs (added/modified/removed counts, with paginated
+  drill-down into the actual changed document IDs).
+- **Database browser** — collection tree with live doc counts/sizes, filtered
+  and paginated document viewing/editing, index management.
+- **Classic backups** — create, list, and restore `.archive.gz` backups, with
+  explicit confirmation before any destructive restore.
+- **Job progress** — live progress for long-running operations (snapshot
+  create, restore, backup), with a dependency-manager modal that surfaces
+  missing `mongodump`/`mongorestore` and offers manual or automatic install.
+
+Build and run it locally — see [Desktop app development](#desktop-app-development)
+under [Development](#development). Prebuilt installers are **not
+code-signed**; see [Distribution](#distribution) for what that means on
+first launch.
 
 ## In-tool guide
 
@@ -261,8 +288,12 @@ A snapshot is like a git commit for a database:
 
 Snapshots are stored in an embedded, single-file database (not one file per
 document) specifically so this stays fast and inode-safe even with millions
-of documents — this has been load-tested at 1,000,000 documents (see
-[internal/snapshot](internal/snapshot)).
+of documents. Snapshot creation, diffing, and restore are all
+bounded-memory by design (streamed/chunked, never a full collection or a
+full change list held in RAM) — verified by an opt-in load test at
+1,000,000 documents with a 15%/5%/2% modify/delete/insert mutation between
+two snapshots (`internal/snapshot/loadtest_test.go`; run it yourself with
+`MONGOBAK_LOAD_TEST=1 go test ./internal/snapshot/... -run TestLoadOneMillionDocuments -v`).
 
 ### Snapshot command reference
 
@@ -378,6 +409,40 @@ Because `config.json` can contain database credentials, it's written with
 owner-only (`0600`) file permissions, and mongobak always redacts passwords
 in any command output.
 
+## Remote sync (Git/GitHub)
+
+A database's snapshot history can be pushed to a Git remote — GitHub or
+anywhere else — so it's backed up off-machine and shareable. This requires
+[Git](https://git-scm.com) and [Git LFS](https://git-lfs.com) (the actual
+compressed document content is tracked via LFS so it doesn't bloat the repo
+or hit GitHub's file-size limits; only small JSON manifests are tracked as
+regular commits).
+
+```bash
+# One-time setup for a connection+database — must be a brand-new scope
+# (remote sync needs the "fs" storage backend, not the default bbolt one;
+# see "Where your data lives" above)
+mongobak remote init --connection local --db myapp --url git@github.com:you/myapp-snapshots.git
+
+# After taking snapshots as usual, push the history
+mongobak snapshot create --connection local --db myapp -m "checkpoint"
+mongobak remote push --connection local --db myapp
+
+# Elsewhere (or after a fresh install), pull an existing history down
+mongobak remote clone git@github.com:you/myapp-snapshots.git --connection local --db myapp
+
+# Keep in sync going forward
+mongobak remote pull --connection local --db myapp
+```
+
+`remote init` switches a brand-new connection+database scope to the
+file-per-document storage backend and configures Git LFS to track it; it
+can't convert a scope that's already using the default bbolt backend — use
+a fresh connection or database name for a remote-synced one. Pushing relies
+entirely on your own Git credentials (SSH key, `gh auth login`, etc.) —
+mongobak only ever runs `git`/`git-lfs` commands, never stores or asks for
+credentials itself.
+
 ## Troubleshooting
 
 **`mongodump`/`mongorestore` not found**
@@ -422,6 +487,16 @@ mongobak snapshot restore --snapshot <id> --connection <name> --db <db>
 mongobak snapshot tag <id> <tag> --connection <name> --db <db>
 mongobak snapshot gc --connection <name> --db <db> [--keep-last <n>]
 
+mongobak remote init --connection <name> --db <db> [--url <git-url>] [--name origin]
+mongobak remote push --connection <name> --db <db> [--remote origin] [--branch main] [-m "message"]
+mongobak remote pull --connection <name> --db <db> [--remote origin] [--branch main]
+mongobak remote clone <git-url> --connection <name> --db <db> [--branch main]
+
+mongobak scheduler add --connection <name> --action snapshot|backup --interval <dur> [--db <db>] [-m "message"]
+mongobak scheduler list
+mongobak scheduler remove <id>
+mongobak scheduler run                          Run in the foreground, firing due schedules (Ctrl+C to stop)
+
 mongobak doctor                                 Check mongodump/mongorestore are installed
 mongobak doctor install [--yes]                 Automatically install missing dependencies
 mongobak guide [topic]                          Show the in-tool usage guide
@@ -447,10 +522,40 @@ The codebase is organized as:
 - `internal/store/` — classic backup index
 - `internal/snapshot/` — the version-control engine (storage backends, diff, restore, gc)
 - `internal/depmanager/` — dependency detection and manual/automatic install
+- `internal/remote/` — Git/Git-LFS wrapper for remote sync
+- `internal/scheduler/` — recurring snapshot/backup jobs (interval-based, no external cron needed)
 - `internal/tui/` — the interactive terminal UI (Bubble Tea)
+- `desktop/` — the native desktop app (Wails v2 + React/TypeScript), a separate Go module that imports `internal/*` directly
+
+### Desktop app development
+
+```bash
+cd desktop
+wails dev    # live-reloading dev build
+wails build  # production .app / .exe
+./build/scripts/package-dmg.sh   # macOS only: package the built .app into a .dmg
+```
+
+See [desktop/README.md](desktop/README.md) for the Wails-generated project notes.
+
+## Distribution
+
+`.github/workflows/release.yml` builds the CLI (macOS/Windows/Linux, all
+architectures) and the desktop app (`.dmg` on macOS, an NSIS installer
+`.exe` on Windows, a binary on Linux) on every `v*` tag push, uploading them
+as workflow artifacts. It deliberately does **not** auto-publish a public
+GitHub Release — that's a separate, explicit step for a maintainer to
+trigger on purpose (`gh release create` with the built artifacts).
+
+None of the built apps/binaries are code-signed or notarized, so first
+launch will trigger an OS warning:
+- **macOS**: right-click the app → Open, to bypass Gatekeeper's
+  unidentified-developer block (only needed once).
+- **Windows**: click "More info" → "Run anyway" on the SmartScreen prompt.
+
+Paid code-signing/notarization is future work, not currently set up.
 
 ## Roadmap
 
-- Native desktop app for macOS (`.dmg`) and Windows (`.exe`), also usable on Linux
-- Remote sync: push/pull snapshot history to a Git/GitHub remote (via Git LFS)
-- Scheduling built into the tool itself (no external cron needed)
+- Code-signing/notarization for the desktop app
+- Auto-publish releases from CI (opt-in, not yet wired up)

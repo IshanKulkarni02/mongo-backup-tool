@@ -51,12 +51,14 @@ var snapshotRestoreCmd = &cobra.Command{
 
 		fmt.Printf("Restoring snapshot %s into connection %q...\n", snapRestoreID, targetConnName)
 		start := time.Now()
-		result, safety, err := snapshot.RestoreWithSafety(opts, targetConnName)
-		if err != nil {
-			return err
-		}
+		// RestoreWithSafety's error message already says whether it
+		// auto-rolled back, so it's returned straight through below.
+		result, safety, _, err := snapshot.RestoreWithSafety(opts, targetConnName)
 		if safety != nil {
 			fmt.Printf("Safety snapshot taken before restore: %s\n", safety.Summary.ID)
+		}
+		if err != nil {
+			return err
 		}
 		fmt.Printf("Restored %d docs across %d collection(s) into %q in %s\n",
 			result.DocsWritten, len(result.Collections), result.Database, time.Since(start).Round(time.Second))

@@ -69,6 +69,9 @@ var connectionRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if conn, ok := cfg.Find(args[0]); ok {
+			config.DeleteCredential(*conn)
+		}
 		if !cfg.Remove(args[0]) {
 			return fmt.Errorf("no connection named %q", args[0])
 		}

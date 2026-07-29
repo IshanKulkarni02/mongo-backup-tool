@@ -54,11 +54,15 @@ func autoInstallBrew(ctx context.Context, onOutput func(string)) error {
 	return nil
 }
 
-// autoInstallWinget is best-effort: the exact winget package ID MongoDB
-// publishes the Database Tools under hasn't been verified against a live
-// Windows machine in this codebase's development. If the ID is wrong,
-// winget fails cleanly (reports no matching package, installs nothing) and
-// the caller should fall back to ManualInstructions.
+// autoInstallWinget: the package ID "MongoDB.DatabaseTools" is confirmed
+// correct via MongoDB's own installation docs (which list winget as a
+// supported package manager for Database Tools on Windows) and cross-checked
+// against the independent winget package catalogs winget.run and
+// winstall.app, which agree on the same ID — but it has still never been
+// exercised against a live Windows machine in this codebase's development
+// (no Windows environment available). If the ID were ever wrong or MongoDB
+// renamed the package, winget fails cleanly (reports no matching package,
+// installs nothing) and the caller should fall back to ManualInstructions.
 func autoInstallWinget(ctx context.Context, onOutput func(string)) error {
 	winget, err := exec.LookPath("winget")
 	if err != nil {

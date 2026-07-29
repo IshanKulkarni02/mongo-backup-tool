@@ -1,0 +1,71 @@
+.ai-settings-card {
+  max-width: 480px;
+  margin-bottom: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ai-settings-section-title {
+  font-size: var(--text-h2);
+  margin: 0 0 var(--space-1);
+}
+
+.ai-settings-subtitle {
+  font-size: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
+}
+
+.ollama-status-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ollama-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.ollama-status.ok {
+  color: var(--color-success);
+}
+
+.ollama-status.warn {
+  color: var(--color-danger);
+}
+
+.ollama-model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.ollama-model-chip {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-1);
+  font-size: var(--text-label);
+}
+
+.ollama-pull-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.ollama-pull-row > :first-child {
+  flex: 1;
+}
+
+.ollama-pull-progress {
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}

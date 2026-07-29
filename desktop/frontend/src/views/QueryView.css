@@ -1,0 +1,39 @@
+.sql-editor-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+}
+
+.explain-panel {
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
+.explain-title {
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-2) 0;
+}
+
+.explain-text {
+  margin: 0;
+  padding: var(--space-2);
+  white-space: pre-wrap;
+  font-size: 0.8em;
+}
+
+.query-success {
+  color: var(--color-success);
+  padding: var(--space-2) 0;
+}
+
+.danger-reason {
+  color: var(--color-danger);
+  font-weight: 500;
+}

@@ -21,6 +21,15 @@ var doctorCmd = &cobra.Command{
 				fmt.Printf("x %s: not found (%s)\n", s.Dependency.Name, s.Dependency.Description)
 			}
 		}
+		fmt.Println()
+		for _, s := range depmanager.CheckOptional() {
+			if s.Installed {
+				fmt.Printf("OK %s (optional, for `mongobak remote`): %s\n", s.Dependency.Name, s.Version)
+			} else {
+				fmt.Printf("-  %s (optional, for `mongobak remote`): not found\n", s.Dependency.Name)
+			}
+		}
+
 		if depmanager.AllInstalled(statuses) {
 			fmt.Println("\nAll required tools are available.")
 			return nil
@@ -38,11 +47,16 @@ var doctorCmd = &cobra.Command{
 }
 
 var doctorInstallYes bool
+var doctorInstallGitLFS bool
 
 var doctorInstallCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Automatically install missing dependencies (mongodump/mongorestore)",
+	Short: "Automatically install missing dependencies (mongodump/mongorestore, or --git-lfs)",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if doctorInstallGitLFS {
+			return installGitLFS()
+		}
+
 		statuses := depmanager.Check()
 		missing := depmanager.Missing(statuses)
 		if len(missing) == 0 {
@@ -94,8 +108,37 @@ var doctorInstallCmd = &cobra.Command{
 	},
 }
 
+func installGitLFS() error {
+	for _, s := range depmanager.CheckOptional() {
+		if s.Dependency.Name == "git-lfs" && s.Installed {
+			fmt.Println("git-lfs is already installed:", s.Version)
+			return nil
+		}
+	}
+	if !doctorInstallYes {
+		fmt.Println("This will run your OS's package manager to install git-lfs (needed for `mongobak remote`).")
+		fmt.Print("Proceed? [y/N] ")
+		var answer string
+		fmt.Scanln(&answer)
+		if answer != "y" && answer != "Y" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
+	}
+	fmt.Println("Installing git-lfs...")
+	if err := depmanager.AutoInstallOptional(context.Background(), "git-lfs", func(line string) {
+		fmt.Println(" ", line)
+	}); err != nil {
+		fmt.Println("\nAutomatic install failed:", err)
+		return err
+	}
+	fmt.Println("\nDone.")
+	return nil
+}
+
 func init() {
 	doctorInstallCmd.Flags().BoolVar(&doctorInstallYes, "yes", false, "Skip the confirmation prompt")
+	doctorInstallCmd.Flags().BoolVar(&doctorInstallGitLFS, "git-lfs", false, "Install git-lfs instead of the required MongoDB Database Tools")
 	doctorCmd.AddCommand(doctorInstallCmd)
 	rootCmd.AddCommand(doctorCmd)
 }

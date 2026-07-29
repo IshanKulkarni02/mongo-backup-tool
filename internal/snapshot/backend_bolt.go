@@ -2,12 +2,22 @@ package snapshot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
+
+// boltOpenTimeout bounds how long opening a scope's store waits to acquire
+// bbolt's exclusive file lock before giving up — bbolt allows only one
+// process (indeed one *boltBackend) to hold a store open for writing at a
+// time, so a concurrent CLI/TUI/desktop/GC operation against the same
+// connection+database will contend for it. This must stay short enough that
+// a user-facing action (e.g. the desktop app opening a diff or a restore)
+// fails with a clear, actionable error rather than appearing to hang.
+const boltOpenTimeout = 5 * time.Second
 
 var (
 	objectsBucket = []byte("objects")
@@ -23,8 +33,11 @@ type boltBackend struct {
 
 func newBoltBackend(scope string) (*boltBackend, error) {
 	path := filepath.Join(scope, "store.bolt")
-	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: 5 * time.Second})
+	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: boltOpenTimeout})
 	if err != nil {
+		if errors.Is(err, bolt.ErrTimeout) {
+			return nil, fmt.Errorf("this connection+database's snapshot store is already in use by another mongobak operation (snapshot, diff, restore, or gc) — wait for it to finish and try again: %s", path)
+		}
 		return nil, fmt.Errorf("opening snapshot store %s: %w", path, err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
@@ -139,24 +152,46 @@ func hasBytePrefix(b, prefix []byte) bool {
 	return len(b) >= len(prefix) && string(b[:len(prefix)]) == string(prefix)
 }
 
-func (b *boltBackend) WriteDocRefs(manifestID, collection string, sorted []DocRef) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(docRefsBucket)
-		for i := 0; i < len(sorted); i += docRefChunkSize {
-			end := i + docRefChunkSize
-			if end > len(sorted) {
-				end = len(sorted)
-			}
-			data, err := json.Marshal(sorted[i:end])
-			if err != nil {
-				return err
-			}
-			if err := bucket.Put(docRefChunkKey(manifestID, collection, i/docRefChunkSize), data); err != nil {
+// WriteDocRefs drains refs one docRefChunkSize batch at a time, so writing a
+// collection's doc-ref list never needs the full list in memory — only one
+// chunk at a time, matching IterDocRefs' read-side memory bound.
+func (b *boltBackend) WriteDocRefs(manifestID, collection string, refs docRefIterator) error {
+	defer refs.Close()
+	chunk := make([]DocRef, 0, docRefChunkSize)
+	chunkIdx := 0
+
+	flush := func(tx *bolt.Tx) error {
+		if len(chunk) == 0 {
+			return nil
+		}
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			return err
+		}
+		if err := tx.Bucket(docRefsBucket).Put(docRefChunkKey(manifestID, collection, chunkIdx), data); err != nil {
+			return err
+		}
+		chunkIdx++
+		chunk = chunk[:0]
+		return nil
+	}
+
+	for {
+		ref, ok, err := refs.Next()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		chunk = append(chunk, ref)
+		if len(chunk) >= docRefChunkSize {
+			if err := b.db.Update(flush); err != nil {
 				return err
 			}
 		}
-		return nil
-	})
+	}
+	return b.db.Update(flush)
 }
 
 // IterDocRefs holds a read-only transaction open for the iterator's

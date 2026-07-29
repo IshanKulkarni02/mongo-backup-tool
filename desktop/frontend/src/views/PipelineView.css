@@ -1,0 +1,40 @@
+.pipeline-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.pipeline-stage {
+  padding: var(--space-2);
+}
+
+.pipeline-stage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-1);
+}
+
+.pipeline-stage-num {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pipeline-stage-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.pipeline-stage-editor {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+  resize: vertical;
+}

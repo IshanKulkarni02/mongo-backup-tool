@@ -7,6 +7,7 @@ package depmanager
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
@@ -18,11 +19,24 @@ type Dependency struct {
 	Description string
 }
 
-// Required lists every dependency mongobak's backup/restore commands need.
-// (Snapshots talk to MongoDB directly via the Go driver and need none of these.)
+// Required lists dependencies mongobak's backup/restore commands cannot
+// function without. (Snapshots talk to MongoDB directly via the Go driver
+// and need none of these.)
 var Required = []Dependency{
 	{Name: "mongodump", Description: "MongoDB Database Tools — used by `mongobak backup`"},
 	{Name: "mongorestore", Description: "MongoDB Database Tools — used by `mongobak restore`"},
+}
+
+// Optional lists dependencies only one specific feature needs — mongobak's
+// core backup/snapshot workflows work fully without them; only that one
+// feature (remote sync) is affected if they're missing. Kept separate from
+// Required so callers (doctor, the TUI's startup check, the desktop
+// dependency modal) can present "this blocks you" versus "this unlocks an
+// extra feature" distinctly rather than treating every gap as equally
+// urgent.
+var Optional = []Dependency{
+	{Name: "git", Description: "Git — used by `mongobak remote` to sync a database's snapshot history"},
+	{Name: "git-lfs", Description: "Git LFS — used by `mongobak remote` to track snapshot object content without bloating the repo"},
 }
 
 // Status is one dependency's detection result.
@@ -40,6 +54,30 @@ func Check() []Status {
 		out[i] = checkOne(d)
 	}
 	return out
+}
+
+// CheckOptional detects every optional (feature-specific, not
+// core-blocking) dependency — currently git and git-lfs, needed only for
+// `mongobak remote`.
+func CheckOptional() []Status {
+	out := make([]Status, len(Optional))
+	for i, d := range Optional {
+		out[i] = checkOptionalOne(d)
+	}
+	return out
+}
+
+func checkOptionalOne(d Dependency) Status {
+	path, err := exec.LookPath(d.Name)
+	if err != nil {
+		return Status{Dependency: d, Installed: false}
+	}
+	out, _ := exec.Command(path, "version").CombinedOutput()
+	if len(out) == 0 {
+		// git itself takes --version, not version; git-lfs takes version.
+		out, _ = exec.Command(path, "--version").CombinedOutput()
+	}
+	return Status{Dependency: d, Installed: true, Path: path, Version: firstLine(string(out))}
 }
 
 // AllInstalled reports whether every required dependency was found.

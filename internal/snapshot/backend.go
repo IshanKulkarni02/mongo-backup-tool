@@ -27,7 +27,11 @@ const (
 type Backend interface {
 	ObjectStore
 
-	WriteDocRefs(manifestID, collection string, sorted []DocRef) error
+	// WriteDocRefs drains refs (already sorted by ID) and persists it,
+	// without requiring the whole collection in memory at once — refs may be
+	// backed by a bounded external-merge-sort spill rather than a slice.
+	// WriteDocRefs always closes refs, including on error.
+	WriteDocRefs(manifestID, collection string, refs docRefIterator) error
 	IterDocRefs(manifestID, collection string) (docRefIterator, error)
 	DeleteDocRefs(manifestID string) error
 }
@@ -89,4 +93,21 @@ func OpenBackend(scope string, requestedKind BackendKind) (Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown snapshot backend %q for scope %s", kind, scope)
 	}
+}
+
+// OpenBackendForRemote ensures a scope uses the fs backend (required for
+// Git/Git-LFS remote sync, since LFS needs individually addressable blob
+// files) and returns it open. For a brand-new scope this selects fs as the
+// backend; for a scope that already uses bolt, it returns a clear error
+// rather than attempting a conversion — pick a fresh connection+database
+// pairing for a git-backed scope instead.
+func OpenBackendForRemote(scope string) (Backend, error) {
+	existing, err := scopeBackendKind(scope)
+	if err != nil {
+		return nil, err
+	}
+	if existing == BackendBolt {
+		return nil, fmt.Errorf("this connection+database's snapshot store already uses the bolt backend, which isn't compatible with Git remote sync — use a fresh connection+database pairing for a git-backed scope")
+	}
+	return OpenBackend(scope, BackendFS)
 }

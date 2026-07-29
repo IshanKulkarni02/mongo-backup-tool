@@ -56,11 +56,6 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 	scanCtx, consistent, endSession := beginSnapshotRead(ctx, client)
 	defer endSession()
 
-	collections, docRefsByCollection, newObjects, err := scanDatabase(scanCtx, client.Database(opts.Database), backend)
-	if err != nil {
-		return nil, err
-	}
-
 	idx, err := loadIndex(scope)
 	if err != nil {
 		return nil, err
@@ -70,20 +65,44 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		parentID = latest.ID
 	}
 
+	// The manifest ID is generated up front (rather than after scanning) so
+	// each collection's doc refs can be written to the backend as soon as
+	// that collection finishes scanning — never holding more than one
+	// collection's bounded spill in memory, and never holding every
+	// collection's doc-ref list until the whole database scan completes.
+	manifestID := uuid.NewString()
+
+	var writeErr error
+	onCollection := func(name string, spill *extSortSpill) error {
+		defer spill.Cleanup()
+		it, err := spill.NewIterator()
+		if err != nil {
+			writeErr = err
+			return err
+		}
+		if err := backend.WriteDocRefs(manifestID, name, it); err != nil {
+			writeErr = fmt.Errorf("writing doc refs for %s: %w", name, err)
+			return writeErr
+		}
+		return nil
+	}
+
+	collections, newObjects, err := scanDatabase(ctx, scanCtx, client.Database(opts.Database), backend, onCollection)
+	if err != nil {
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		return nil, err
+	}
+
 	m := &Manifest{
-		ID:          uuid.NewString(),
+		ID:          manifestID,
 		Connection:  opts.Connection,
 		Database:    opts.Database,
 		Message:     opts.Message,
 		CreatedAt:   time.Now().Format(time.RFC3339),
 		ParentID:    parentID,
 		Collections: collections,
-	}
-
-	for name, refs := range docRefsByCollection {
-		if err := backend.WriteDocRefs(m.ID, name, refs); err != nil {
-			return nil, fmt.Errorf("writing doc refs for %s: %w", name, err)
-		}
 	}
 
 	if err := saveManifest(scope, m); err != nil {
@@ -100,33 +119,68 @@ func Create(opts CreateOptions) (*CreateResult, error) {
 		DocCount:   m.DocCount(),
 		NewObjects: newObjects,
 	}
-	idx.Snapshots = append(idx.Snapshots, summary)
-	if err := saveIndex(scope, idx); err != nil {
+	// Re-read the index inside the lock (not just reuse the copy read
+	// before the scan) and append to that fresh copy — another process
+	// (or another goroutine, for the fs backend which lacks bbolt's
+	// exclusive-open protection) could have published its own snapshot
+	// while this one was scanning; publishing against a stale in-memory
+	// index would silently discard that snapshot from index.json.
+	if err := withScopeLock(scope, func() error {
+		fresh, err := loadIndex(scope)
+		if err != nil {
+			return err
+		}
+		fresh.Snapshots = append(fresh.Snapshots, summary)
+		return saveIndex(scope, fresh)
+	}); err != nil {
 		return nil, err
 	}
 
 	return &CreateResult{Summary: summary, Consistent: consistent}, nil
 }
 
-// LiveScan is the result of ScanLive: a Manifest plus its collections'
-// doc-ref lists held in memory (never persisted to a Backend), so it can be
-// diffed against a stored snapshot without creating one.
+// LiveScan is the result of ScanLive: a Manifest plus each collection's
+// sorted doc-ref list held as a bounded external-merge spill (never a full
+// in-memory slice, never persisted to a Backend), so it can be diffed
+// against a stored snapshot — even a very large one — without creating one.
+// Callers must call Close() when done to remove the spills' temp files.
 type LiveScan struct {
 	Manifest *Manifest
-	docRefs  map[string][]DocRef
+	spills   map[string]*extSortSpill
 }
 
-// Source returns a docRefSource for Compare, backed by this scan's
-// in-memory doc-ref lists.
+// Source returns a docRefSource for Compare, backed by this scan's spills.
+// Each call opens a fresh iterator, so Source() may be used more than once
+// (e.g. if the same LiveScan were ever compared twice) without exhausting
+// the underlying data.
 func (s *LiveScan) Source() docRefSource {
 	return func(collection string) (docRefIterator, error) {
-		return newSliceDocRefIterator(s.docRefs[collection]), nil
+		spill, ok := s.spills[collection]
+		if !ok {
+			return newSliceDocRefIterator(nil), nil
+		}
+		return spill.NewIterator()
 	}
 }
 
-// ScanLive builds an in-memory snapshot of a database's current state
-// without persisting anything, so it can be diffed against a stored
-// snapshot without creating one.
+// Close removes every collection spill's temp files. Safe to call once the
+// scan is no longer needed (e.g. after Compare() has consumed it).
+func (s *LiveScan) Close() error {
+	var firstErr error
+	for _, spill := range s.spills {
+		if err := spill.Cleanup(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ScanLive builds a snapshot of a database's current state without
+// persisting anything, so it can be diffed against a stored snapshot
+// without creating one. Doc-ref lists are held in bounded external-merge
+// spills (see extsort.go), not full in-memory slices, so scanning a
+// million-document collection for a live diff doesn't require holding the
+// whole thing in RAM.
 func ScanLive(uri, database string) (*LiveScan, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -140,8 +194,17 @@ func ScanLive(uri, database string) (*LiveScan, error) {
 	scanCtx, _, endSession := beginSnapshotRead(ctx, client)
 	defer endSession()
 
-	collections, docRefs, _, err := scanDatabase(scanCtx, client.Database(database), nil)
+	spills := make(map[string]*extSortSpill)
+	onCollection := func(name string, spill *extSortSpill) error {
+		spills[name] = spill
+		return nil
+	}
+
+	collections, _, err := scanDatabase(ctx, scanCtx, client.Database(database), nil, onCollection)
 	if err != nil {
+		for _, spill := range spills {
+			spill.Cleanup()
+		}
 		return nil, err
 	}
 	return &LiveScan{
@@ -150,7 +213,7 @@ func ScanLive(uri, database string) (*LiveScan, error) {
 			Collections: collections,
 			CreatedAt:   time.Now().Format(time.RFC3339),
 		},
-		docRefs: docRefs,
+		spills: spills,
 	}, nil
 }
 

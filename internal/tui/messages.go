@@ -140,7 +140,8 @@ func diffLiveCmd(connName, uri, db, snapshotID string) tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
-		diff, err := snapshot.Compare(from, scope.Source(from.ID), live.Manifest, live.Source())
+		defer live.Close()
+		diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), live.Manifest, live.Source())
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -149,7 +150,7 @@ func diffLiveCmd(connName, uri, db, snapshotID string) tea.Cmd {
 		}
 		var lines []string
 		for name, cd := range diff.Collections {
-			lines = append(lines, fmt.Sprintf("%s: +%d added, ~%d modified, -%d removed", name, len(cd.Added), len(cd.Modified), len(cd.Removed)))
+			lines = append(lines, fmt.Sprintf("%s: +%d added, ~%d modified, -%d removed", name, cd.AddedCount, cd.ModifiedCount, cd.RemovedCount))
 		}
 		return actionDoneMsg{lines: lines}
 	}
@@ -157,7 +158,9 @@ func diffLiveCmd(connName, uri, db, snapshotID string) tea.Cmd {
 
 func restoreSnapshotCmd(connName, uri, db, snapshotID string) tea.Cmd {
 	return func() tea.Msg {
-		result, safety, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
+		// RestoreWithSafety's error message already says whether it
+		// auto-rolled back, so it's passed straight through here.
+		result, safety, _, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
 			SourceConnection: connName,
 			SourceDatabase:   db,
 			SnapshotID:       snapshotID,

@@ -2,6 +2,13 @@ package snapshot
 
 import "fmt"
 
+// ScopeDir returns the on-disk directory holding a connection+database's
+// snapshot data, creating it if needed. Exposed for the remote-sync CLI,
+// which operates on the directory directly (git init/add/commit/push).
+func ScopeDir(connection, database string) (string, error) {
+	return scopeDir(connection, database)
+}
+
 // Log returns every snapshot for a connection+database, oldest first.
 func Log(connection, database string) ([]Summary, error) {
 	scope, err := scopeDir(connection, database)
@@ -33,36 +40,41 @@ func Get(connection, database, idOrPrefix string) (*Manifest, error) {
 }
 
 // Tag adds a label to an existing snapshot. Tagged snapshots are protected
-// from GC.
+// from GC. Tag never opens a Backend (unlike Create/GC), so — unlike those
+// — it has no implicit protection from bbolt's own file lock even for
+// bolt-backed scopes; the scope lock below is what actually serializes it
+// against a concurrent Create/GC/Tag on the same scope.
 func Tag(connection, database, idOrPrefix, tag string) error {
 	scope, err := scopeDir(connection, database)
 	if err != nil {
 		return err
 	}
-	idx, err := loadIndex(scope)
-	if err != nil {
-		return err
-	}
-	summary, ok := idx.Find(idOrPrefix)
-	if !ok {
-		return fmt.Errorf("no snapshot matching %q for %s/%s", idOrPrefix, connection, database)
-	}
-	for _, t := range summary.Tags {
-		if t == tag {
-			return nil
+	return withScopeLock(scope, func() error {
+		idx, err := loadIndex(scope)
+		if err != nil {
+			return err
 		}
-	}
-	summary.Tags = append(summary.Tags, tag)
+		summary, ok := idx.Find(idOrPrefix)
+		if !ok {
+			return fmt.Errorf("no snapshot matching %q for %s/%s", idOrPrefix, connection, database)
+		}
+		for _, t := range summary.Tags {
+			if t == tag {
+				return nil
+			}
+		}
+		summary.Tags = append(summary.Tags, tag)
 
-	m, err := loadManifest(scope, summary.ID)
-	if err != nil {
-		return err
-	}
-	m.Tags = summary.Tags
-	if err := saveManifest(scope, m); err != nil {
-		return err
-	}
-	return saveIndex(scope, idx)
+		m, err := loadManifest(scope, summary.ID)
+		if err != nil {
+			return err
+		}
+		m.Tags = summary.Tags
+		if err := saveManifest(scope, m); err != nil {
+			return err
+		}
+		return saveIndex(scope, idx)
+	})
 }
 
 // Scope opens a connection+database's snapshot backend for reading —

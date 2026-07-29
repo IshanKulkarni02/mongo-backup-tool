@@ -1,0 +1,73 @@
+.data-grid {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.data-grid-header-scroll {
+  overflow-x: hidden;
+  border-bottom: 1px solid var(--color-border-strong);
+  background: var(--color-bg-subtle);
+}
+
+.data-grid-header-row {
+  display: flex;
+}
+
+.data-grid-header-cell {
+  font-weight: 600;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: var(--space-2) var(--space-1);
+}
+
+.data-grid-body {
+  overflow: auto;
+  max-height: 480px;
+}
+
+.data-grid-row {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-grid-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.data-grid-row.selected {
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+
+.data-grid-cell {
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.data-grid-cell:last-child {
+  border-right: none;
+}
+
+.data-grid-fk-link {
+  background: none;
+  border: none;
+  padding: 4px var(--space-1);
+  color: var(--color-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.data-grid-fk-link:hover {
+  color: var(--color-accent-hover);
+}

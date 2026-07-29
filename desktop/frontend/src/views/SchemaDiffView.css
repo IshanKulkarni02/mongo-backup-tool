@@ -1,0 +1,137 @@
+.diff-picker-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.diff-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.diff-side-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+
+.diff-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.diff-table-card {
+  border-left: 3px solid var(--color-border);
+}
+
+.diff-change-added {
+  border-left-color: var(--color-success);
+}
+
+.diff-change-removed {
+  border-left-color: var(--color-danger);
+}
+
+.diff-change-modified {
+  border-left-color: var(--color-accent);
+}
+
+.diff-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.diff-badge {
+  font-size: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  border: 1px solid var(--color-border);
+}
+
+.diff-badge-added {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.diff-badge-removed {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.diff-badge-modified {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.diff-columns {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diff-column-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9em;
+}
+
+.diff-column-types {
+  color: var(--color-text-muted);
+}
+
+.migration-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+  overflow: hidden;
+}
+
+.migration-warnings {
+  padding: var(--space-2);
+  color: var(--color-danger);
+  font-size: 0.9em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.migration-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2);
+  font-weight: 600;
+}
+
+.migration-sql {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2);
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.migration-header-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.migration-folder-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.migration-folder-row > :first-child {
+  flex: 1;
+}

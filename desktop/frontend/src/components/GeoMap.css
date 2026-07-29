@@ -1,0 +1,10 @@
+.geo-map-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.geo-map {
+  height: 480px;
+  width: 100%;
+}

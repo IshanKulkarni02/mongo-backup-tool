@@ -4,6 +4,19 @@
   gap: var(--space-2);
 }
 
+.credential-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2);
+  color: #9a6b00;
+  background: var(--color-bg-subtle);
+  border: 1px solid #9a6b00;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-label);
+}
+
 .conn-row {
   display: flex;
   align-items: flex-start;
@@ -13,6 +26,91 @@
 
 .conn-name {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.conn-engine-badge {
+  font-weight: 500;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.conn-env-badge {
+  font-weight: 500;
+  font-size: var(--text-label);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.conn-env-prod {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.conn-env-staging {
+  color: #9a6b00;
+  border-color: #9a6b00;
+}
+
+.conn-env-dev {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.conn-tenant-badge {
+  font-weight: 500;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+}
+
+.conn-readonly-badge {
+  font-weight: 500;
+  font-size: var(--text-label);
+  border-radius: var(--radius-sm);
+  padding: 1px var(--space-1);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-accent);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-accent);
+}
+
+.ssh-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+.ssh-toggle label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+}
+
+.ssh-key-textarea {
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
 }
 
 .conn-uri {
