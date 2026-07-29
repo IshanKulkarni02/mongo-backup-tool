@@ -10,6 +10,7 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/dashboard"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/safeguard"
 )
 
 func dashboardStore() (*dashboard.Store, error) {
@@ -75,7 +76,13 @@ func (a *App) DeleteSavedQuery(id string) error {
 	return saveDashboardStore(s)
 }
 
-// RunSavedQuery re-runs a saved query and returns its current result.
+// RunSavedQuery re-runs a saved query and returns its current result. A
+// saved query isn't guaranteed to be a read (SaveQuery stores whatever SQL
+// the editor held at save time), so anything that doesn't look like a read
+// goes through the same requireWritable/Classify gating as RunSQLExecute —
+// read-only connections refuse it outright, and a dangerous statement
+// (DROP, TRUNCATE, ALTER, or an unqualified DELETE/UPDATE) is refused too,
+// since this path has no "type the database name" confirmation UI.
 func (a *App) RunSavedQuery(id string) (engine.SQLResult, error) {
 	s, err := dashboardStore()
 	if err != nil {
@@ -84,6 +91,14 @@ func (a *App) RunSavedQuery(id string) (engine.SQLResult, error) {
 	q, ok := s.FindQuery(id)
 	if !ok {
 		return engine.SQLResult{}, fmt.Errorf("no saved query %q", id)
+	}
+	if !safeguard.IsRead(q.SQLText) {
+		if err := a.requireWritable(q.Connection); err != nil {
+			return engine.SQLResult{}, err
+		}
+		if class := safeguard.Classify(q.SQLText); class.Risk == safeguard.RiskDangerous {
+			return engine.SQLResult{}, fmt.Errorf("dangerous statement (%s) — open it in the SQL editor to run it with confirmation", class.Reason)
+		}
 	}
 	sess, release, err := a.sqlSession(q.Connection)
 	if err != nil {

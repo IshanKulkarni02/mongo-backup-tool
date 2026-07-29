@@ -84,6 +84,36 @@ func Classify(sqlText string) Classification {
 	}
 }
 
+// readVerbs are statement verbs that never modify data, so callers that
+// only ever intend to read (RunSQLQuery's bounded table-browser path,
+// RunSavedQuery) can skip the requireWritable/Classify gating entirely —
+// mirroring the frontend's looksLikeRead check for the ad-hoc "Run" button.
+var readVerbs = map[string]bool{
+	"SELECT": true, "SHOW": true, "PRAGMA": true, "EXPLAIN": true,
+}
+
+var writeVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER|CREATE)\b`)
+
+// IsRead reports whether sqlText is a read-only statement: SELECT, SHOW,
+// PRAGMA, EXPLAIN, or a WITH/CTE whose text contains no write verb
+// anywhere. The WITH case is intentionally conservative — a false negative
+// here just means an ordinary read gets routed through the write-gated
+// path, whereas a false positive would let a destructive CTE bypass
+// requireWritable and the dangerous-statement confirmation entirely.
+func IsRead(sqlText string) bool {
+	stripped := leadingCommentRe.ReplaceAllString(sqlText, "")
+	stripped = strings.TrimSpace(stripped)
+	upper := strings.ToUpper(stripped)
+	verb := firstWordRe.FindString(upper)
+	if readVerbs[verb] {
+		return true
+	}
+	if verb == "WITH" {
+		return !writeVerbRe.MatchString(upper)
+	}
+	return false
+}
+
 var finalVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER)\b`)
 
 func classifyWithCTE(upper string) Classification {
