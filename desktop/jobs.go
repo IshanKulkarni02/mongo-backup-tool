@@ -42,6 +42,12 @@ type jobManager struct {
 	cancels    map[string]context.CancelFunc
 	onUpdate   func(Job) // set by App.startup once the Wails context exists
 	onProgress func(JobProgress)
+
+	// inFlight tracks every job goroutine started via run/runCancelable
+	// that hasn't finished yet, so shutdown can wait for them instead of
+	// tearing down engine connections out from under a job still using
+	// them.
+	inFlight sync.WaitGroup
 }
 
 func newJobManager() *jobManager {
@@ -97,7 +103,9 @@ func (m *jobManager) finish(id string, err error, result any) {
 // job's ID immediately so the caller isn't blocked.
 func (m *jobManager) run(jobType string, fn func() (any, error)) string {
 	j := m.start(jobType)
+	m.inFlight.Add(1)
 	go func() {
+		defer m.inFlight.Done()
 		result, err := fn()
 		m.finish(j.ID, err, result)
 	}()
@@ -113,7 +121,9 @@ func (m *jobManager) runCancelable(jobType string, fn func(ctx context.Context) 
 	m.mu.Lock()
 	m.cancels[j.ID] = cancel
 	m.mu.Unlock()
+	m.inFlight.Add(1)
 	go func() {
+		defer m.inFlight.Done()
 		result, err := fn(ctx)
 		m.mu.Lock()
 		delete(m.cancels, j.ID)
@@ -135,4 +145,22 @@ func (m *jobManager) cancel(id string) bool {
 	}
 	cancelFn()
 	return true
+}
+
+// waitAll blocks until every job started via run/runCancelable has
+// finished, or until ctx is done — whichever comes first. Used at
+// shutdown so in-flight backups/restores/queries get a chance to finish
+// (or at least unwind cleanly) before engine connections are closed out
+// from under them; a hard deadline on ctx keeps a stuck job from hanging
+// app exit forever.
+func (m *jobManager) waitAll(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		m.inFlight.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }

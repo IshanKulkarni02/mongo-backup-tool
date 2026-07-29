@@ -80,6 +80,89 @@ func TestJobManagerCancelAfterCompletionReturnsFalse(t *testing.T) {
 	}
 }
 
+// TestJobManagerWaitAllWaitsForRunningJob is the regression test for #63:
+// app shutdown closed engine connections without waiting for in-flight
+// background jobs, so a backup/restore mid-flight could have its
+// connection torn out from under it. waitAll must not return while a job
+// started via run() is still executing.
+func TestJobManagerWaitAllWaitsForRunningJob(t *testing.T) {
+	m := newJobManager()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	m.run("test", func() (any, error) {
+		close(started)
+		<-release
+		return "ok", nil
+	})
+
+	<-started
+
+	waitDone := make(chan struct{})
+	go func() {
+		m.waitAll(context.Background())
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+		t.Fatal("waitAll returned while the job was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitAll did not return after the job finished")
+	}
+}
+
+// TestJobManagerWaitAllReturnsOnContextDeadline confirms waitAll doesn't
+// hang app shutdown forever if a job never finishes — it gives up once
+// the caller's context expires.
+func TestJobManagerWaitAllReturnsOnContextDeadline(t *testing.T) {
+	m := newJobManager()
+	release := make(chan struct{})
+	defer close(release)
+	m.run("test", func() (any, error) {
+		<-release
+		return "ok", nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	waitDone := make(chan struct{})
+	go func() {
+		m.waitAll(ctx)
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitAll did not respect the context deadline")
+	}
+}
+
+// TestJobManagerWaitAllReturnsImmediatelyWhenIdle confirms waitAll doesn't
+// block at all when there are no in-flight jobs — the common case at
+// shutdown.
+func TestJobManagerWaitAllReturnsImmediatelyWhenIdle(t *testing.T) {
+	m := newJobManager()
+	done := make(chan struct{})
+	go func() {
+		m.waitAll(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("waitAll blocked with no in-flight jobs")
+	}
+}
+
 func TestJobManagerEmitsProgress(t *testing.T) {
 	m := newJobManager()
 	got := make(chan JobProgress, 1)
