@@ -60,6 +60,35 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestIsRead(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"select", "SELECT * FROM users", true},
+		{"show", "SHOW TABLES", true},
+		{"pragma", "PRAGMA table_info(users)", true},
+		{"explain", "EXPLAIN SELECT 1", true},
+		{"cte pure read", "WITH x AS (SELECT 1) SELECT * FROM x", true},
+
+		{"insert", "INSERT INTO users (email) VALUES ('a@b.com')", false},
+		{"create", "CREATE TABLE t (id INT)", false},
+		{"delete", "DELETE FROM users WHERE id = 1", false},
+		{"drop", "DROP TABLE users", false},
+		{"cte with delete", "WITH x AS (SELECT 1) DELETE FROM users", false},
+
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := IsRead(c.sql); got != c.want {
+				t.Errorf("IsRead(%q) = %v, want %v", c.sql, got, c.want)
+			}
+		})
+	}
+}
+
 func TestClassifyDangerousAlwaysHasReason(t *testing.T) {
 	dangerous := []string{
 		"DROP TABLE t", "TRUNCATE t", "ALTER TABLE t ADD COLUMN x INT",
