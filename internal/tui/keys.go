@@ -83,6 +83,21 @@ func (m Model) depChoices() []string {
 }
 
 func (m Model) handleDepsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.depBusy {
+		// An install is running in the background (autoInstallDepsCmd ->
+		// depsInstallDoneMsg -> checkDepsCmd -> depsCheckedMsg). Block all
+		// input until it finishes, matching every other async action in
+		// this TUI — they all move to screenProgress, a screen this key
+		// dispatcher never routes input to at all (see handleKey), so
+		// input is effectively frozen while they run. Without this guard,
+		// the user could navigate away mid-install (e.g. to
+		// screenAddConnection) and later get forcibly pulled back to
+		// screenConnections once depsCheckedMsg's handler sees every
+		// dependency installed — losing whatever they were doing — and
+		// could also press Enter again to fire a second, concurrent
+		// depmanager.AutoInstall() racing the first one.
+		return m, nil
+	}
 	if depmanager.AllInstalled(m.depStatuses) {
 		return m, nil
 	}
