@@ -476,6 +476,20 @@ export namespace main {
 	        this.storageSize = source["storageSize"];
 	    }
 	}
+	export class WebhookListenerInfo {
+	    addr: string;
+	    token: string;
+
+	    static createFrom(source: any = {}) {
+	        return new WebhookListenerInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.addr = source["addr"];
+	        this.token = source["token"];
+	    }
+	}
 	export class VectorComparison {
 	    dimensions: number;
 	    cosine: number;

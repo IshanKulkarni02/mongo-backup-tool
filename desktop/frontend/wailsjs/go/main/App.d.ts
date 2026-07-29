@@ -170,7 +170,7 @@ export function SaveWidget(arg1:string,arg2:string,arg3:string,arg4:string,arg5:
 
 export function SecureCredentialStorageAvailable():Promise<boolean>;
 
-export function StartWebhookListener(arg1:number):Promise<string>;
+export function StartWebhookListener(arg1:number):Promise<main.WebhookListenerInfo>;
 
 export function StopWebhookListener():Promise<void>;
 

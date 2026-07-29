@@ -58,6 +58,7 @@ export function WebhookView() {
   const [running, setRunning] = useState(false);
   const [port, setPort] = useState("8089");
   const [addr, setAddr] = useState("");
+  const [token, setToken] = useState("");
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [insertTarget, setInsertTarget] = useState<WebhookRequest | null>(null);
   const toast = useToast();
@@ -80,10 +81,11 @@ export function WebhookView() {
       return;
     }
     try {
-      const a = await StartWebhookListener(p);
-      setAddr(a);
+      const info = await StartWebhookListener(p);
+      setAddr(info.addr);
+      setToken(info.token);
       setRunning(true);
-      toast.push("success", `Listening on ${a}`);
+      toast.push("success", `Listening on ${info.addr}`);
     } catch (e) {
       toast.push("error", String(e));
     }
@@ -106,7 +108,9 @@ export function WebhookView() {
       </div>
       <p className="webhook-hint">
         Point a device that pushes data over HTTP (e.g. a biometric terminal's ADMS push protocol) at this listener
-        to see exactly what it sends before wiring up a real integration.
+        to see exactly what it sends before wiring up a real integration. The listener only accepts localhost
+        connections and requires the auth token below on every request — a device that can't send a custom header
+        can't use this listener.
       </p>
 
       <div className="query-bar">
@@ -127,6 +131,12 @@ export function WebhookView() {
           </Button>
         )}
       </div>
+
+      {running && token && (
+        <p className="webhook-hint mono">
+          Send header <strong>X-Dbhelm-Webhook-Token: {token}</strong> with every request, or it's refused with 401.
+        </p>
+      )}
 
       {requests.length === 0 && (
         <EmptyState

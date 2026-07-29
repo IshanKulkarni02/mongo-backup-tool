@@ -3,12 +3,23 @@ package listener
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func authedPost(l *Listener, url, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set(TokenHeader, l.Token())
+	return http.DefaultClient.Do(req)
+}
 
 func TestListenerCapturesRequest(t *testing.T) {
 	var mu sync.Mutex
@@ -23,7 +34,7 @@ func TestListenerCapturesRequest(t *testing.T) {
 	}
 	defer l.Stop(context.Background())
 
-	resp, err := http.Post("http://"+l.Addr()+"/iclock/cdata?SN=12345", "application/json", strings.NewReader(`{"punch":"data"}`))
+	resp, err := authedPost(l, "http://"+l.Addr()+"/iclock/cdata?SN=12345", "application/json", strings.NewReader(`{"punch":"data"}`))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -68,6 +79,82 @@ func TestListenerCapturesRequest(t *testing.T) {
 	}
 }
 
+// TestListenerBindsLoopbackOnly guards against #43: the listener must
+// never be reachable from another host, regardless of the machine's
+// firewall/NAT configuration.
+func TestListenerBindsLoopbackOnly(t *testing.T) {
+	l, err := Start(0, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer l.Stop(context.Background())
+
+	host, _, err := net.SplitHostPort(l.Addr())
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", l.Addr(), err)
+	}
+	if !net.ParseIP(host).IsLoopback() {
+		t.Fatalf("listener bound to %q, want a loopback address", l.Addr())
+	}
+}
+
+// TestListenerRejectsRequestWithoutToken guards against #43: an
+// unauthenticated caller must not be able to get a payload captured (and,
+// via the UI's "map to database" feature, inserted into a real database).
+func TestListenerRejectsRequestWithoutToken(t *testing.T) {
+	var mu sync.Mutex
+	captured := false
+	l, err := Start(0, func(r Request) {
+		mu.Lock()
+		captured = true
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer l.Stop(context.Background())
+
+	resp, err := http.Post("http://"+l.Addr()+"/", "application/json", strings.NewReader(`{"evil":"payload"}`))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+
+	time.Sleep(50 * time.Millisecond) // give onRequest a chance to fire, if it wrongly would
+	mu.Lock()
+	defer mu.Unlock()
+	if captured {
+		t.Fatal("request without a valid token was still forwarded to onRequest")
+	}
+}
+
+// TestListenerRejectsWrongToken guards against #43: a stale or guessed
+// token must not be accepted.
+func TestListenerRejectsWrongToken(t *testing.T) {
+	l, err := Start(0, nil)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer l.Stop(context.Background())
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+l.Addr()+"/", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(TokenHeader, "not-the-real-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
 func TestListenerStopClosesServer(t *testing.T) {
 	l, err := Start(0, nil)
 	if err != nil {
@@ -100,7 +187,7 @@ func TestListenerBodyCapEnforced(t *testing.T) {
 	defer l.Stop(context.Background())
 
 	huge := strings.Repeat("x", bodyCap+1000)
-	resp, err := http.Post("http://"+l.Addr()+"/", "text/plain", strings.NewReader(huge))
+	resp, err := authedPost(l, "http://"+l.Addr()+"/", "text/plain", strings.NewReader(huge))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
