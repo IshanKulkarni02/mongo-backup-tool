@@ -104,32 +104,31 @@ func (a *App) AddConnection(input ConnectionInput) error {
 	if input.TenantSessionVar != "" && !engine.ValidSessionVarName(input.TenantSessionVar) {
 		return fmt.Errorf("invalid tenant session variable name %q", input.TenantSessionVar)
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	// Preserve any tenant value already set for an existing connection of
-	// the same name — enabling/renaming tenant mode here shouldn't reset
-	// whichever tenant SwitchTenant last selected.
-	tenantValue := ""
-	if existing, ok := cfg.Find(input.Name); ok {
-		tenantValue = existing.TenantValue
-	}
-	cfg.Upsert(config.Connection{
-		Name:             input.Name,
-		URI:              input.URI,
-		Engine:           engineID,
-		Environment:      input.Environment,
-		ReadOnly:         input.ReadOnly,
-		SSHHost:          input.SSHHost,
-		SSHUser:          input.SSHUser,
-		SSHPassword:      input.SSHPassword,
-		SSHPrivateKey:    input.SSHPrivateKey,
-		TenantSessionVar: input.TenantSessionVar,
-		TenantValue:      tenantValue,
-		CreatedAt:        time.Now().Format(time.RFC3339),
+	err := config.Update(func(cfg *config.Config) error {
+		// Preserve any tenant value already set for an existing connection
+		// of the same name — enabling/renaming tenant mode here shouldn't
+		// reset whichever tenant SwitchTenant last selected.
+		tenantValue := ""
+		if existing, ok := cfg.Find(input.Name); ok {
+			tenantValue = existing.TenantValue
+		}
+		cfg.Upsert(config.Connection{
+			Name:             input.Name,
+			URI:              input.URI,
+			Engine:           engineID,
+			Environment:      input.Environment,
+			ReadOnly:         input.ReadOnly,
+			SSHHost:          input.SSHHost,
+			SSHUser:          input.SSHUser,
+			SSHPassword:      input.SSHPassword,
+			SSHPrivateKey:    input.SSHPrivateKey,
+			TenantSessionVar: input.TenantSessionVar,
+			TenantValue:      tenantValue,
+			CreatedAt:        time.Now().Format(time.RFC3339),
+		})
+		return nil
 	})
-	if err := config.Save(cfg); err != nil {
+	if err != nil {
 		return err
 	}
 	// A replaced profile may have a cached session against the old URI.
@@ -152,17 +151,16 @@ func (a *App) PickSQLiteFile() (string, error) {
 // RemoveConnection deletes a saved connection, its cached session, and its
 // keychain entry.
 func (a *App) RemoveConnection(name string) error {
-	cfg, err := config.Load()
+	err := config.Update(func(cfg *config.Config) error {
+		if conn, ok := cfg.Find(name); ok {
+			config.DeleteCredential(*conn)
+		}
+		if !cfg.Remove(name) {
+			return fmt.Errorf("no connection named %q", name)
+		}
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	if conn, ok := cfg.Find(name); ok {
-		config.DeleteCredential(*conn)
-	}
-	if !cfg.Remove(name) {
-		return fmt.Errorf("no connection named %q", name)
-	}
-	if err := config.Save(cfg); err != nil {
 		return err
 	}
 	a.engines.Invalidate(name)
@@ -175,20 +173,19 @@ func (a *App) RemoveConnection(name string) error {
 // reconnects and re-runs SET/set_config under the new tenant, rather than
 // mutating a pooled connection's session state in place.
 func (a *App) SwitchTenant(connectionName, tenantValue string) error {
-	cfg, err := config.Load()
+	err := config.Update(func(cfg *config.Config) error {
+		conn, ok := cfg.Find(connectionName)
+		if !ok {
+			return fmt.Errorf("no connection named %q", connectionName)
+		}
+		if conn.TenantSessionVar == "" {
+			return fmt.Errorf("connection %q isn't configured for multi-tenant mode (no tenant session variable set)", connectionName)
+		}
+		conn.TenantValue = tenantValue
+		cfg.Upsert(*conn)
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-	conn, ok := cfg.Find(connectionName)
-	if !ok {
-		return fmt.Errorf("no connection named %q", connectionName)
-	}
-	if conn.TenantSessionVar == "" {
-		return fmt.Errorf("connection %q isn't configured for multi-tenant mode (no tenant session variable set)", connectionName)
-	}
-	conn.TenantValue = tenantValue
-	cfg.Upsert(*conn)
-	if err := config.Save(cfg); err != nil {
 		return err
 	}
 	a.engines.Invalidate(connectionName)
