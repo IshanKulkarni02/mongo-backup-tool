@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/codegen"
+	"github.com/IshanKulkarni02/dbhelm/internal/codegen"
 )
 
 // GenerateAPISchema exports one table's schema as an API/type artifact.

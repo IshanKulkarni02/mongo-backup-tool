@@ -1,6 +1,6 @@
-// Package tui implements mongobak's interactive terminal UI: an arrow-key
+// Package tui implements dbhelm's interactive terminal UI: an arrow-key
 // driven interface over the same internal/* core the CLI uses, so behavior
-// never diverges between the two. Launched by running `mongobak` with no
+// never diverges between the two. Launched by running `dbhelm` with no
 // subcommand.
 package tui
 
@@ -8,16 +8,17 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 type screen int
 
 const (
-	screenDeps screen = iota
+	screenLauncherChoice screen = iota
+	screenDeps
 	screenConnections
 	screenAddConnection
 	screenDatabases
@@ -39,6 +40,7 @@ const (
 	actionBackupCreate
 	actionBackupList
 	actionBackupRestore
+	actionOpenDesktopApp
 )
 
 type menuItem struct {
@@ -66,6 +68,9 @@ type Model struct {
 	height   int
 	quitting bool
 
+	// screenLauncherChoice
+	launcherCursor int
+
 	// screenDeps
 	depStatuses   []depmanager.Status
 	depCursor     int
@@ -80,10 +85,11 @@ type Model struct {
 	connErr     string
 
 	// screenAddConnection
-	nameInput textinput.Model
-	uriInput  textinput.Model
-	addFocus  int
-	addErr    string
+	nameInput   textinput.Model
+	uriInput    textinput.Model
+	engineInput textinput.Model
+	addFocus    int
+	addErr      string
 
 	// screenDatabases
 	connection config.Connection
@@ -123,7 +129,18 @@ type Model struct {
 	resultBack   screen
 }
 
-func initialModel() Model {
+func initialModel(forceChooser bool) Model {
+	startScreen := screenDeps
+	if forceChooser {
+		startScreen = screenLauncherChoice
+	} else if cfg, err := config.Load(); err == nil && cfg.Launcher.Choice == "" {
+		// First run (or config predates the launcher choice) — ask once,
+		// then remember it (see handleLauncherChoiceKey). Returning users
+		// go straight to the dependency check, same as before this screen
+		// existed.
+		startScreen = screenLauncherChoice
+	}
+
 	name := textinput.New()
 	name.Placeholder = "e.g. local"
 	name.Focus()
@@ -132,6 +149,10 @@ func initialModel() Model {
 	uri := textinput.New()
 	uri.Placeholder = "mongodb://localhost:27017"
 	uri.CharLimit = 256
+
+	engineIn := textinput.New()
+	engineIn.Placeholder = "mongodb (default), postgres, mysql, or sqlite"
+	engineIn.CharLimit = 32
 
 	dbIn := textinput.New()
 	dbIn.Placeholder = "database name"
@@ -142,14 +163,18 @@ func initialModel() Model {
 	msgIn.CharLimit = 256
 
 	return Model{
-		screen:       screenDeps,
+		screen:       startScreen,
 		nameInput:    name,
 		uriInput:     uri,
+		engineInput:  engineIn,
 		dbInput:      dbIn,
 		messageInput: msgIn,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
+	if m.screen == screenLauncherChoice {
+		return nil
+	}
 	return checkDepsCmd
 }

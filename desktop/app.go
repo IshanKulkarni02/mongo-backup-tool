@@ -7,14 +7,14 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	_ "github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/mongodb"
-	_ "github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/mysql"
-	_ "github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/postgres"
-	_ "github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/sqlite"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/tunnel"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/listener"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/mongodb"
+	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/mysql"
+	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/postgres"
+	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/sqlite"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
+	"github.com/IshanKulkarni02/dbhelm/internal/listener"
 )
 
 // App is the single facade bound to the frontend. Every exported method

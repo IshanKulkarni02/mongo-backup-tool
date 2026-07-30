@@ -18,6 +18,7 @@ import { Input } from "../components/Input";
 import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Select } from "../components/Select";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { useJobUpdates, Job } from "../hooks/useJobs";
@@ -41,10 +42,16 @@ export function SnapshotsView() {
 
   useEffect(() => {
     ListConnections().then((conns) => {
-      setConnections(conns);
-      if (conns.length > 0) setConnection(conns[0].name);
+      const snapshotConns = conns.filter((c) => c.capabilities?.snapshots);
+      setConnections(snapshotConns);
+      if (snapshotConns.length > 0) setConnection(snapshotConns[0].name);
     });
   }, []);
+
+  // Comparing a snapshot against the live database only works for MongoDB
+  // connections (see openDiffScope in desktop/snapshots.go) — SQL snapshots
+  // can only be compared against each other for now.
+  const canCompareLive = connections.find((c) => c.name === connection)?.capabilities?.documents ?? false;
 
   useEffect(() => {
     if (!connection) return;
@@ -107,22 +114,19 @@ export function SnapshotsView() {
       </div>
 
       <div className="scope-picker">
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.length === 0 && <option value="">No connections</option>}
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-          <option value="">Select a database</option>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: c.name }))}
+          placeholder="No connections"
+        />
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={databases.map((d) => ({ value: d, label: d }))}
+          placeholder="Select a database"
+          disabled={databases.length === 0}
+        />
       </div>
 
       {connection && database && (
@@ -134,6 +138,7 @@ export function SnapshotsView() {
               to={compareTo}
               onFrom={setCompareFrom}
               onTo={setCompareTo}
+              allowLive={canCompareLive}
             />
           )}
 
@@ -235,33 +240,33 @@ function CompareBar({
   to,
   onFrom,
   onTo,
+  allowLive,
 }: {
   snapshots: snapshot.Summary[];
   from: string;
   to: string;
   onFrom: (v: string) => void;
   onTo: (v: string) => void;
+  allowLive: boolean;
 }) {
   return (
     <div className="compare-bar">
       <GitCompare size={16} />
       <span>Compare</span>
-      <select className="input" value={from} onChange={(e) => onFrom(e.target.value)}>
-        {snapshots.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.id.slice(0, 8)} — {s.createdAt}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={from}
+        onChange={onFrom}
+        options={snapshots.map((s) => ({ value: s.id, label: `${s.id.slice(0, 8)} — ${s.createdAt}` }))}
+      />
       <span>vs.</span>
-      <select className="input" value={to} onChange={(e) => onTo(e.target.value)}>
-        <option value="">Live database</option>
-        {snapshots.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.id.slice(0, 8)} — {s.createdAt}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={to}
+        onChange={onTo}
+        options={[
+          ...(allowLive ? [{ value: "", label: "Live database" }] : []),
+          ...snapshots.map((s) => ({ value: s.id, label: `${s.id.slice(0, 8)} — ${s.createdAt}` })),
+        ]}
+      />
     </div>
   );
 }

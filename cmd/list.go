@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/humansize"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 var listCmd = &cobra.Command{
@@ -23,7 +23,7 @@ var listCmd = &cobra.Command{
 			return err
 		}
 		if len(idx.Backups) == 0 {
-			fmt.Println("No backups yet. Create one with: mongobak backup --connection <name> [--db <db>]")
+			fmt.Println("No backups yet. Create one with: dbhelm backup --connection <name> [--db <db>]")
 			return nil
 		}
 		fmt.Printf("%-36s  %-15s  %-15s  %-10s  %-25s  %s\n", "ID", "CONNECTION", "DATABASE", "SIZE", "CREATED", "FILE")

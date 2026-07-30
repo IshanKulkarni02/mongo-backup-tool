@@ -10,8 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/scheduler"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/scheduler"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var schedulerCmd = &cobra.Command{
@@ -34,8 +35,8 @@ var (
 var schedulerAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a recurring schedule",
-	Example: `  mongobak scheduler add --connection local --db myapp --action snapshot --interval 1h
-  mongobak scheduler add --connection local --action backup --interval 24h`,
+	Example: `  dbhelm scheduler add --connection local --db myapp --action snapshot --interval 1h
+  dbhelm scheduler add --connection local --action backup --interval 24h`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := scheduler.Add(scheduler.Schedule{
 			Connection: schedAddConn,
@@ -61,7 +62,7 @@ var schedulerListCmd = &cobra.Command{
 			return err
 		}
 		if len(schedules) == 0 {
-			fmt.Println("No schedules yet. Add one with: mongobak scheduler add --connection <name> --action snapshot|backup --interval 1h")
+			fmt.Println("No schedules yet. Add one with: dbhelm scheduler add --connection <name> --action snapshot|backup --interval 1h")
 			return nil
 		}
 		for _, s := range schedules {
@@ -92,7 +93,7 @@ var schedulerRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run in the foreground, firing due schedules until interrupted (Ctrl+C)",
 	Long: `Run in the foreground, checking every 30 seconds for due schedules and
-firing them. This is mongobak's built-in alternative to external cron —
+firing them. This is dbhelm's built-in alternative to external cron —
 start it once (directly, under a process supervisor, or as a launchd/
 systemd service) and leave it running.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -145,6 +146,24 @@ func fireSchedule(s scheduler.Schedule) error {
 	case scheduler.ActionSnapshot:
 		conn, err := resolveConn(s.Connection)
 		if err != nil {
+			return err
+		}
+		eng, err := engine.Lookup(conn.EngineID())
+		if err != nil {
+			return err
+		}
+		if eng.Capabilities().SQL {
+			sess, release, err := openSQLSession(conn)
+			if err != nil {
+				return err
+			}
+			defer release()
+			_, err = snapshot.CreateSQL(context.Background(), snapshot.SQLCreateOptions{
+				Connection: s.Connection,
+				Database:   s.Database,
+				Message:    s.Message,
+				Session:    sess,
+			})
 			return err
 		}
 		_, err = snapshot.Create(snapshot.CreateOptions{

@@ -1,6 +1,6 @@
 name: Release build
 
-# Gates on `go vet`/`go test ./...` passing, then builds the mongobak CLI
+# Gates on `go vet`/`go test ./...` passing, then builds the dbhelm CLI
 # (all platforms) and the desktop app (.dmg for macOS, a standalone .exe +
 # NSIS installer for Windows, a binary for Linux) on every version-tag push,
 # and creates a DRAFT GitHub Release with every artifact attached.
@@ -48,16 +48,16 @@ jobs:
         include:
           - goos: darwin
             goarch: arm64
-            name: mongobak-darwin-arm64
+            name: dbhelm-darwin-arm64
           - goos: darwin
             goarch: amd64
-            name: mongobak-darwin-amd64
+            name: dbhelm-darwin-amd64
           - goos: windows
             goarch: amd64
-            name: mongobak-windows-amd64.exe
+            name: dbhelm-windows-amd64.exe
           - goos: linux
             goarch: amd64
-            name: mongobak-linux-amd64
+            name: dbhelm-linux-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -118,12 +118,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: runner.os == 'macOS'
         with:
-          name: mongobak.dmg
-          path: desktop/build/bin/mongobak.dmg
+          name: dbhelm.dmg
+          path: desktop/build/bin/dbhelm.dmg
 
       - name: Build (Windows -> standalone .exe + NSIS installer)
         # `-nsis` produces BOTH the plain application binary
-        # (mongobak.exe) and the NSIS installer (*installer.exe) in the
+        # (dbhelm.exe) and the NSIS installer (*installer.exe) in the
         # same build/bin directory — both are required deliverables per
         # the product spec, not just the installer.
         if: runner.os == 'Windows'
@@ -133,13 +133,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
         with:
-          name: mongobak-desktop-windows-amd64.exe
-          path: desktop/build/bin/mongobak.exe
+          name: dbhelm-desktop-windows-amd64.exe
+          path: desktop/build/bin/dbhelm.exe
 
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
         with:
-          name: mongobak-setup.exe
+          name: dbhelm-setup.exe
           path: desktop/build/bin/*installer.exe
 
       - name: Build (Linux -> binary)
@@ -150,8 +150,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
-          name: mongobak-desktop-linux-amd64
-          path: desktop/build/bin/mongobak
+          name: dbhelm-desktop-linux-amd64
+          path: desktop/build/bin/dbhelm
 
   release:
     name: Create draft GitHub Release

@@ -42,7 +42,7 @@
 }
 
 .json-number {
-  color: #b45309;
+  color: var(--color-warning);
 }
 
 .json-bool {

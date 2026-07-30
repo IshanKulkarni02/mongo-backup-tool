@@ -4,9 +4,9 @@
 --
 -- Usage:
 --   docker compose -f docker-compose.test.yml up -d mysql
---   mysql -h 127.0.0.1 -P 53306 -u mongobak -pmongobak mongobak_test < scripts/dev-seed/mysql.sql
---   mongobak connection add mysql-dev --engine mysql \
---     --uri "mongobak:mongobak@tcp(127.0.0.1:53306)/mongobak_test"
+--   mysql -h 127.0.0.1 -P 53306 -u dbhelm -pdbhelm dbhelm_test < scripts/dev-seed/mysql.sql
+--   dbhelm connection add mysql-dev --engine mysql \
+--     --uri "dbhelm:dbhelm@tcp(127.0.0.1:53306)/dbhelm_test"
 
 DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS orders;

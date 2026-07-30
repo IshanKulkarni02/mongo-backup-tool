@@ -13,7 +13,7 @@ import (
 // using the current OS's package manager. onOutput (may be nil) receives
 // each line of command output as it runs, for a live progress view. This is
 // always an explicit, user-initiated action (never run silently) — see
-// `mongobak doctor install` and the TUI's dependency screen.
+// `dbhelm doctor install` and the TUI's dependency screen.
 func AutoInstall(ctx context.Context, onOutput func(line string)) error {
 	switch runtime.GOOS {
 	case "darwin":

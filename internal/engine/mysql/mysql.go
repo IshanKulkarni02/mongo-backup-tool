@@ -10,15 +10,16 @@ import (
 	"database/sql"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/sqlbase"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/tunnel"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/sqlbase"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 )
 
 func init() {
@@ -32,7 +33,7 @@ type Engine struct{}
 func (Engine) ID() string { return "mysql" }
 
 func (Engine) Capabilities() engine.Caps {
-	return engine.Caps{SQL: true, ForeignKeys: true}
+	return engine.Caps{SQL: true, ForeignKeys: true, Snapshots: true}
 }
 
 func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, error) {
@@ -52,7 +53,7 @@ func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, 
 		// The dial-context registry is process-global and keyed by network
 		// name, so each tunneled connection needs a unique name to avoid
 		// colliding with (or being torn down by) another profile's tunnel.
-		netName = "mongobak-ssh-" + uuid.NewString()
+		netName = "dbhelm-ssh-" + uuid.NewString()
 		mysql.RegisterDialContext(netName, func(ctx context.Context, addr string) (net.Conn, error) {
 			return tun.DialContext(ctx, "tcp", addr)
 		})
@@ -145,7 +146,7 @@ func (s *Session) ListDatabases(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -170,7 +171,7 @@ func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine
 		return nil, err
 	}
 	defer rows.Close()
-	var out []engine.NamespaceInfo
+	out := []engine.NamespaceInfo{}
 	for rows.Next() {
 		var info engine.NamespaceInfo
 		if err := rows.Scan(&info.Name, &info.DocCount, &info.StorageSize); err != nil {
@@ -187,18 +188,31 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 	out := engine.TableSchema{Name: table}
 
 	colRows, err := s.db.QueryContext(ctx, `
-		SELECT column_name, data_type, is_nullable = 'YES', column_key = 'PRI'
-		FROM information_schema.columns
-		WHERE table_schema = ? AND table_name = ?
-		ORDER BY ordinal_position`, database, table)
+		SELECT c.column_name, c.data_type, c.is_nullable = 'YES', pk.ordinal_position
+		FROM information_schema.columns c
+		LEFT JOIN information_schema.key_column_usage pk
+		  ON pk.table_schema = c.table_schema AND pk.table_name = c.table_name
+		  AND pk.column_name = c.column_name AND pk.constraint_name = 'PRIMARY'
+		WHERE c.table_schema = ? AND c.table_name = ?
+		ORDER BY c.ordinal_position`, database, table)
 	if err != nil {
 		return engine.TableSchema{}, err
 	}
+	type pkCol struct {
+		name    string
+		ordinal int64
+	}
+	var pkCols []pkCol
 	for colRows.Next() {
 		var c engine.Column
-		if err := colRows.Scan(&c.Name, &c.DataType, &c.Nullable, &c.IsPK); err != nil {
+		var pkOrdinal sql.NullInt64
+		if err := colRows.Scan(&c.Name, &c.DataType, &c.Nullable, &pkOrdinal); err != nil {
 			colRows.Close()
 			return engine.TableSchema{}, err
+		}
+		if pkOrdinal.Valid {
+			c.IsPK = true
+			pkCols = append(pkCols, pkCol{name: c.Name, ordinal: pkOrdinal.Int64})
 		}
 		out.Columns = append(out.Columns, c)
 	}
@@ -207,6 +221,10 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 		return engine.TableSchema{}, err
 	}
 	colRows.Close()
+	sort.Slice(pkCols, func(i, j int) bool { return pkCols[i].ordinal < pkCols[j].ordinal })
+	for _, pc := range pkCols {
+		out.PrimaryKey = append(out.PrimaryKey, pc.name)
+	}
 
 	fkRows, err := s.db.QueryContext(ctx, `
 		SELECT column_name, referenced_table_name, referenced_column_name
@@ -243,4 +261,77 @@ func (s *Session) Explain(ctx context.Context, database, sqlText string) (string
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	return sqlbase.FormatExplainRows(ctx, s.db, "EXPLAIN "+sqlText)
+}
+
+// ListTableIndexes returns the table's non-PRIMARY indexes, reconstructed
+// as literal CREATE INDEX DDL — unlike Postgres/SQLite, MySQL has no
+// single built-in DDL-text column for an index, so this builds the
+// statement manually from information_schema.statistics. Unlike Postgres,
+// MySQL has no separate "unique constraint" catalog object distinct from a
+// unique index, so a unique index backing a table-level UNIQUE constraint
+// can't be reliably excluded here the way Postgres' constraint-backed
+// indexes are — restore treats "index already exists" as non-fatal
+// (see restore_sql.go) as the safety net for that ambiguity instead.
+func (s *Session) ListTableIndexes(ctx context.Context, database, table string) ([]engine.IndexDef, error) {
+	ctx, cancel := opCtx(ctx)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT index_name, MAX(non_unique) = 0 AS is_unique, GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') AS cols
+		FROM information_schema.statistics
+		WHERE table_schema = ? AND table_name = ? AND index_name != 'PRIMARY'
+		GROUP BY index_name
+		ORDER BY index_name`, database, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []engine.IndexDef{}
+	for rows.Next() {
+		var name, cols string
+		var unique bool
+		if err := rows.Scan(&name, &unique, &cols); err != nil {
+			return nil, err
+		}
+		colList := strings.Split(cols, ",")
+		for i, c := range colList {
+			colList[i] = quoteIdent(c)
+		}
+		kind := "INDEX"
+		if unique {
+			kind = "UNIQUE INDEX"
+		}
+		ddl := fmt.Sprintf("CREATE %s %s ON %s (%s)", kind, quoteIdent(name), quoteIdent(table), strings.Join(colList, ", "))
+		out = append(out, engine.IndexDef{Name: name, DDL: ddl})
+	}
+	return out, rows.Err()
+}
+
+// BeginConsistentRead opens a REPEATABLE READ, read-only transaction —
+// InnoDB's MVCC gives this a consistent snapshot as of the transaction's
+// start, so every table streamed through it sees one point-in-time view
+// of the database.
+func (s *Session) BeginConsistentRead(ctx context.Context) (engine.ConsistentReadTx, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	return &readTx{tx: tx}, nil
+}
+
+type readTx struct {
+	tx *sql.Tx
+}
+
+func (r *readTx) StreamRows(ctx context.Context, database, table string, onRow func(row map[string]any) error) error {
+	sqlText := fmt.Sprintf("SELECT * FROM %s.%s", quoteIdent(database), quoteIdent(table))
+	return sqlbase.StreamRows(ctx, r.tx, sqlText, onRow)
+}
+
+// Close rolls back rather than commits — read-only, nothing to persist.
+func (r *readTx) Close(ctx context.Context) error {
+	return r.tx.Rollback()
+}
+
+func quoteIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }

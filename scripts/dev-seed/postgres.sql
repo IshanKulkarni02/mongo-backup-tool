@@ -5,9 +5,9 @@
 --
 -- Usage:
 --   docker compose -f docker-compose.test.yml up -d postgres
---   psql "postgres://mongobak:mongobak@localhost:55432/mongobak_test" -f scripts/dev-seed/postgres.sql
---   mongobak connection add pg-dev --engine postgres \
---     --uri "postgres://mongobak:mongobak@localhost:55432/mongobak_test"
+--   psql "postgres://dbhelm:dbhelm@localhost:55432/dbhelm_test" -f scripts/dev-seed/postgres.sql
+--   dbhelm connection add pg-dev --engine postgres \
+--     --uri "postgres://dbhelm:dbhelm@localhost:55432/dbhelm_test"
 
 DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS orders;

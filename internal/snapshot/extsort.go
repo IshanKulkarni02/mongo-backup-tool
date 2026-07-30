@@ -38,7 +38,7 @@ type extSortSpill struct {
 }
 
 func newExtSortSpill() (*extSortSpill, error) {
-	dir, err := os.MkdirTemp("", "mongobak-extsort-*")
+	dir, err := os.MkdirTemp("", "dbhelm-extsort-*")
 	if err != nil {
 		return nil, err
 	}

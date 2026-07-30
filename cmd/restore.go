@@ -2,14 +2,14 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 var (
@@ -22,8 +22,8 @@ var (
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
 	Short: "Restore a local backup archive into a saved connection",
-	Example: `  mongobak restore --backup <id> --connection local
-  mongobak restore --backup <id> --connection local --target-db myapp_restored --drop`,
+	Example: `  dbhelm restore --backup <id> --connection local
+  dbhelm restore --backup <id> --connection local --target-db myapp_restored --drop`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return RunRestore(restoreBackupID, restoreConn, restoreTargetDB, restoreDrop)
 	},
@@ -38,7 +38,7 @@ func RunRestore(backupID, connName, targetDB string, drop bool) error {
 	}
 	conn, ok := cfg.Find(connName)
 	if !ok {
-		return fmt.Errorf("no connection named %q (see: mongobak connection list)", connName)
+		return fmt.Errorf("no connection named %q (see: dbhelm connection list)", connName)
 	}
 
 	backupsDir, err := config.BackupsDir()
@@ -51,10 +51,13 @@ func RunRestore(backupID, connName, targetDB string, drop bool) error {
 	}
 	bk, ok := idx.Find(backupID)
 	if !ok {
-		return fmt.Errorf("no backup with id %q (see: mongobak list)", backupID)
+		return fmt.Errorf("no backup with id %q (see: dbhelm list)", backupID)
 	}
 
-	archivePath := filepath.Join(backupsDir, bk.FileName)
+	archivePath, err := pathsafety.SafeJoin(backupsDir, bk.FileName)
+	if err != nil {
+		return err
+	}
 
 	target := targetDB
 	if target == "" {
@@ -81,7 +84,7 @@ func RunRestore(backupID, connName, targetDB string, drop bool) error {
 }
 
 func init() {
-	restoreCmd.Flags().StringVar(&restoreBackupID, "backup", "", "Backup ID to restore (required, see: mongobak list)")
+	restoreCmd.Flags().StringVar(&restoreBackupID, "backup", "", "Backup ID to restore (required, see: dbhelm list)")
 	restoreCmd.Flags().StringVar(&restoreConn, "connection", "", "Saved connection name to restore into (required)")
 	restoreCmd.Flags().StringVar(&restoreTargetDB, "target-db", "", "Restore into a different database name than the one backed up")
 	restoreCmd.Flags().BoolVar(&restoreDrop, "drop", false, "Drop existing collections before restoring")

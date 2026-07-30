@@ -12,15 +12,22 @@ import {
 } from "../../wailsjs/go/main/App";
 import { main } from "../../wailsjs/go/models";
 import { Button } from "../components/Button";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { Card } from "../components/Card";
 import { Input } from "../components/Input";
 import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../components/Toast";
+import { useUIMode } from "../lib/uiMode";
 import "./ConnectionsView.css";
 
-export function ConnectionsView() {
+export function ConnectionsView({
+  onOpenDatabase,
+}: {
+  onOpenDatabase?: (connection: main.ConnectionInfo, database: string) => void;
+}) {
+  const { mode } = useUIMode();
   const [connections, setConnections] = useState<main.ConnectionInfo[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
@@ -47,6 +54,17 @@ export function ConnectionsView() {
     }
   }
 
+  // Beginner mode skips the "Test" affordance entirely — a non-technical
+  // user expects to just see their databases, not to know they need to
+  // click a button labeled "Test" first.
+  useEffect(() => {
+    if (mode !== "beginner" || !connections) return;
+    for (const c of connections) {
+      if (!(c.name in testResults)) handleTest(c.name);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, connections]);
+
   async function handleRemove() {
     if (!removeTarget) return;
     try {
@@ -60,30 +78,38 @@ export function ConnectionsView() {
     }
   }
 
+  const addLabel = mode === "beginner" ? "Connect a Database" : "Add connection";
+
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">Connections</h1>
+        <h1 className="view-title">{mode === "beginner" ? "My Databases" : "Connections"}</h1>
         <Button onClick={() => setShowAdd(true)}>
-          <Plus size={16} /> Add connection
+          <Plus size={16} /> {addLabel}
         </Button>
       </div>
 
       {secureStorage === false && (
         <div className="credential-warning" role="status">
           <AlertTriangle size={16} />
-          System keychain unavailable. Saved database passwords use the owner-only config file (0600) fallback.
+          {mode === "beginner"
+            ? "Your computer's secure password storage isn't available, so database passwords are saved in a private file only you can read."
+            : "System keychain unavailable. Saved database passwords use the owner-only config file (0600) fallback."}
         </div>
       )}
 
       {connections?.length === 0 && (
         <EmptyState
           icon={<Database size={32} />}
-          title="No connections yet"
-          description="Add a local or Atlas MongoDB connection to get started."
+          title={mode === "beginner" ? "No databases yet" : "No connections yet"}
+          description={
+            mode === "beginner"
+              ? "Connect your first database to start viewing your data."
+              : "Add a local or Atlas MongoDB connection to get started."
+          }
           action={
             <Button onClick={() => setShowAdd(true)}>
-              <Plus size={16} /> Add connection
+              <Plus size={16} /> {addLabel}
             </Button>
           }
         />
@@ -97,43 +123,66 @@ export function ConnectionsView() {
               <div className="conn-info">
                 <div className="conn-name">
                   {c.name}
-                  <span className="conn-engine-badge">{c.engine}</span>
+                  <span className="conn-engine-badge">{ENGINE_LABELS[c.engine] ?? c.engine}</span>
                   {c.environment && (
                     <span className={`conn-env-badge conn-env-${c.environment}`}>{c.environment}</span>
                   )}
-                  {c.readOnly && <span className="conn-readonly-badge">read-only</span>}
-                  {c.tenantSessionVar && (
+                  {c.readOnly && (
+                    <span className="conn-readonly-badge">{mode === "beginner" ? "protected" : "read-only"}</span>
+                  )}
+                  {mode === "pro" && c.tenantSessionVar && (
                     <span className="conn-tenant-badge" title={`tenant session var: ${c.tenantSessionVar}`}>
                       tenant: {c.tenantValue || "(none set)"}
                     </span>
                   )}
                 </div>
-                <div className="conn-uri mono">{c.redactedUri}</div>
+                {mode === "pro" && <div className="conn-uri mono">{c.redactedUri}</div>}
+                {result === "loading" && mode === "beginner" && (
+                  <div className="conn-dbs conn-dbs-loading">
+                    <Loader2 size={14} className="spin" /> Connecting...
+                  </div>
+                )}
                 {Array.isArray(result) && (
                   <div className="conn-dbs">
                     {result.length === 0
-                      ? "No databases"
+                      ? mode === "beginner"
+                        ? "No data in this database yet"
+                        : "No databases"
                       : result.map((d) => (
-                          <span key={d} className="conn-db-chip mono">
+                          <button
+                            key={d}
+                            type="button"
+                            className="conn-db-chip mono"
+                            onClick={() => onOpenDatabase?.(c, d)}
+                            disabled={!onOpenDatabase}
+                            title={onOpenDatabase ? `Open ${d}` : undefined}
+                          >
                             {d}
-                          </span>
+                          </button>
                         ))}
                   </div>
                 )}
-                {result === "error" && <div className="conn-dbs conn-dbs-error">Connection failed</div>}
+                {result === "error" && (
+                  <div className="conn-dbs conn-dbs-error">
+                    {mode === "beginner" ? "Couldn't connect — check the details and try again" : "Connection failed"}
+                  </div>
+                )}
               </div>
               <div className="conn-actions">
-                <Button variant="ghost" onClick={() => handleTest(c.name)} disabled={result === "loading"}>
-                  {result === "loading" ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                  Test
-                </Button>
-                {c.tenantSessionVar && (
+                {mode === "pro" && (
+                  <Button variant="ghost" onClick={() => handleTest(c.name)} disabled={result === "loading"}>
+                    {result === "loading" ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+                    Test
+                  </Button>
+                )}
+                {mode === "pro" && c.tenantSessionVar && (
                   <Button variant="ghost" onClick={() => setTenantTarget(c)}>
                     <Users size={16} /> Switch tenant
                   </Button>
                 )}
                 <Button variant="danger" onClick={() => setRemoveTarget(c.name)}>
                   <Trash2 size={16} />
+                  {mode === "beginner" && " Remove"}
                 </Button>
               </div>
             </Card>
@@ -141,7 +190,17 @@ export function ConnectionsView() {
         })}
       </div>
 
-      {showAdd && (
+      {showAdd && mode === "beginner" && (
+        <GuidedAddConnectionModal
+          onClose={() => setShowAdd(false)}
+          onAdded={() => {
+            setShowAdd(false);
+            load();
+          }}
+        />
+      )}
+
+      {showAdd && mode === "pro" && (
         <AddConnectionModal
           onClose={() => setShowAdd(false)}
           onAdded={() => {
@@ -242,6 +301,187 @@ const URI_PLACEHOLDERS: Record<string, string> = {
 
 const ALL_ENGINES = ["mongodb", "postgres", "mysql", "sqlite"];
 
+const ENGINE_BLURBS: Record<string, string> = {
+  mongodb: "Stores flexible, JSON-like records. Common for apps and MongoDB Atlas.",
+  postgres: "A reliable, general-purpose SQL database.",
+  mysql: "A reliable, widely-used SQL database.",
+  sqlite: "A single file on your computer — the simplest option, no server needed.",
+};
+
+const DEFAULT_PORTS: Record<string, string> = { mongodb: "27017", postgres: "5432", mysql: "3306" };
+
+// buildGuidedURI assembles a connection string from plain host/port/user/
+// password/database fields so a beginner never has to type or understand
+// URI syntax. Values with special characters are percent-encoded; MySQL's
+// DSN format doesn't use percent-encoding, so very unusual passwords there
+// may still need the raw URI field in Pro mode.
+function buildGuidedURI(
+  engine: string,
+  opts: { host: string; port: string; user: string; password: string; dbName: string; useSrv: boolean }
+): string {
+  const { host, port, user, password, dbName, useSrv } = opts;
+  const encUser = encodeURIComponent(user);
+  const encPass = encodeURIComponent(password);
+  const auth = user ? `${encUser}:${encPass}@` : "";
+  switch (engine) {
+    case "mongodb": {
+      const scheme = useSrv ? "mongodb+srv" : "mongodb";
+      const hostPart = useSrv ? host : `${host}:${port || DEFAULT_PORTS.mongodb}`;
+      return `${scheme}://${auth}${hostPart}/${dbName}`;
+    }
+    case "postgres":
+      return `postgres://${auth}${host}:${port || DEFAULT_PORTS.postgres}/${dbName}`;
+    case "mysql":
+      return `${user}:${password}@tcp(${host}:${port || DEFAULT_PORTS.mysql})/${dbName}`;
+    default:
+      return "";
+  }
+}
+
+function GuidedAddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
+  const [name, setName] = useState("");
+  const [engine, setEngine] = useState("mongodb");
+  const [availableEngines, setAvailableEngines] = useState<string[]>(["mongodb"]);
+  const [filePath, setFilePath] = useState("");
+  const [host, setHost] = useState("localhost");
+  const [port, setPort] = useState("");
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
+  const [dbName, setDbName] = useState("");
+  const [useSrv, setUseSrv] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  useEffect(() => {
+    EngineIDs().then(setAvailableEngines).catch(() => {});
+  }, []);
+
+  async function browseSQLiteFile() {
+    try {
+      const path = await PickSQLiteFile();
+      if (path) setFilePath(path);
+    } catch (e) {
+      toast.push("error", String(e));
+    }
+  }
+
+  async function submit() {
+    if (!name) {
+      setError("Give your database a name so you can find it later");
+      return;
+    }
+    const uri = engine === "sqlite" ? filePath : buildGuidedURI(engine, { host, port, user, password, dbName, useSrv });
+    if (!uri || (engine !== "sqlite" && !host)) {
+      setError(engine === "sqlite" ? "Choose a database file" : "At least the address (host) is required");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await AddConnection(new main.ConnectionInput({ name, uri, engine, environment: "", readOnly: false }));
+      toast.push("success", `Connected to "${name}"`);
+      onAdded();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Connect a database"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? "Connecting..." : "Connect"}
+          </Button>
+        </>
+      }
+    >
+      <Input
+        label="Give it a name"
+        placeholder="e.g. My Database"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoFocus
+      />
+      <div className="field">
+        <label className="field-label">What kind of database is it?</label>
+        <SegmentedControl
+          value={engine}
+          onChange={setEngine}
+          options={ALL_ENGINES.map((id) => ({
+            value: id,
+            label: ENGINE_LABELS[id] ?? id,
+            disabled: !availableEngines.includes(id),
+          }))}
+        />
+        <div className="field-hint">{ENGINE_BLURBS[engine]}</div>
+      </div>
+
+      {engine === "sqlite" ? (
+        <Input
+          label="Database file"
+          placeholder="Choose a file on your computer"
+          value={filePath}
+          onChange={(e) => setFilePath(e.target.value)}
+          mono
+          error={error}
+          trailing={
+            <Button variant="ghost" onClick={browseSQLiteFile}>
+              Choose file
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          {engine === "mongodb" && (
+            <div className="ssh-toggle">
+              <label>
+                <input type="checkbox" checked={useSrv} onChange={(e) => setUseSrv(e.target.checked)} />
+                This is a cloud database (e.g. MongoDB Atlas)
+              </label>
+            </div>
+          )}
+          <Input
+            label={useSrv ? "Cluster address" : "Address (host)"}
+            placeholder={useSrv ? "mycluster.abcde.mongodb.net" : "localhost"}
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            error={error}
+          />
+          {!useSrv && (
+            <Input
+              label="Port (optional)"
+              placeholder={DEFAULT_PORTS[engine]}
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+            />
+          )}
+          <Input label="Username (optional)" value={user} onChange={(e) => setUser(e.target.value)} />
+          <Input
+            label="Password (optional)"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <Input
+            label={engine === "mongodb" ? "Database name (optional)" : "Database name"}
+            value={dbName}
+            onChange={(e) => setDbName(e.target.value)}
+          />
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
   const [name, setName] = useState("");
   const [uri, setUri] = useState("");
@@ -321,13 +561,15 @@ function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded
       <Input label="Name" placeholder="e.g. local" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
       <div className="field">
         <label className="field-label">Engine</label>
-        <select className="input" value={engine} onChange={(e) => setEngine(e.target.value)}>
-          {ALL_ENGINES.map((id) => (
-            <option key={id} value={id} disabled={!availableEngines.includes(id)}>
-              {ENGINE_LABELS[id] ?? id}
-            </option>
-          ))}
-        </select>
+        <SegmentedControl
+          value={engine}
+          onChange={setEngine}
+          options={ALL_ENGINES.map((id) => ({
+            value: id,
+            label: ENGINE_LABELS[id] ?? id,
+            disabled: !availableEngines.includes(id),
+          }))}
+        />
       </div>
       <Input
         label={engine === "sqlite" ? "File path" : "URI"}
@@ -346,12 +588,16 @@ function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded
       />
       <div className="field">
         <label className="field-label">Environment (optional)</label>
-        <select className="input" value={environment} onChange={(e) => setEnvironment(e.target.value)}>
-          <option value="">None</option>
-          <option value="dev">Development</option>
-          <option value="staging">Staging</option>
-          <option value="prod">Production</option>
-        </select>
+        <SegmentedControl
+          value={environment}
+          onChange={setEnvironment}
+          options={[
+            { value: "", label: "None" },
+            { value: "dev", label: "Development" },
+            { value: "staging", label: "Staging" },
+            { value: "prod", label: "Production" },
+          ]}
+        />
       </div>
       <div className="ssh-toggle">
         <label>

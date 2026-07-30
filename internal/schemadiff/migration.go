@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 // Migration is a generated reconciliation script plus whatever the caller
@@ -31,7 +31,7 @@ func transactionalDDL(dialect string) bool {
 // Column type/nullability changes are never auto-generated as an ALTER
 // COLUMN statement — the syntax and safety of changing a column's type
 // varies too much across dialects (and can silently lose data), so those
-// are emitted as a review comment instead, consistent with mongobak's
+// are emitted as a review comment instead, consistent with dbhelm's
 // "explicit about destructive consequences" principle elsewhere in the
 // tool. New/dropped tables and added/removed columns are generated
 // directly since those are unambiguous.

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/IshanKulkarni02/mongo-backup-tool/internal/vectorutil"
+import "github.com/IshanKulkarni02/dbhelm/internal/vectorutil"
 
 // VectorComparison is the result of comparing two embedding vectors.
 type VectorComparison struct {

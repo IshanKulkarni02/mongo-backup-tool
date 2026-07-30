@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var snapGCKeepLast int
@@ -13,7 +13,7 @@ var snapGCKeepLast int
 var snapshotGCCmd = &cobra.Command{
 	Use:     "gc",
 	Short:   "Prune old untagged snapshots and sweep unreferenced object storage",
-	Example: `  mongobak snapshot gc --connection local --db myapp --keep-last 10`,
+	Example: `  dbhelm snapshot gc --connection local --db myapp --keep-last 10`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConnAndDB(); err != nil {
 			return err

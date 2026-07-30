@@ -14,13 +14,13 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: mongobak
-      POSTGRES_PASSWORD: mongobak
-      POSTGRES_DB: mongobak_test
+      POSTGRES_USER: dbhelm
+      POSTGRES_PASSWORD: dbhelm
+      POSTGRES_DB: dbhelm_test
     ports:
       - "55432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mongobak -d mongobak_test"]
+      test: ["CMD-SHELL", "pg_isready -U dbhelm -d dbhelm_test"]
       interval: 2s
       timeout: 5s
       retries: 15
@@ -28,14 +28,14 @@ services:
   mysql:
     image: mysql:8
     environment:
-      MYSQL_ROOT_PASSWORD: mongobak
-      MYSQL_DATABASE: mongobak_test
-      MYSQL_USER: mongobak
-      MYSQL_PASSWORD: mongobak
+      MYSQL_ROOT_PASSWORD: dbhelm
+      MYSQL_DATABASE: dbhelm_test
+      MYSQL_USER: dbhelm
+      MYSQL_PASSWORD: dbhelm
     ports:
       - "53306:3306"
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u mongobak -pmongobak"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u dbhelm -pdbhelm"]
       interval: 2s
       timeout: 5s
       retries: 15

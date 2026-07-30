@@ -25,7 +25,7 @@
 
 .btn-primary {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-on-accent);
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--color-accent-hover);
@@ -47,7 +47,7 @@
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-on-accent);
 }
 
 .btn:focus-visible {

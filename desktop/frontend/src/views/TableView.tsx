@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy } from "lucide-react";
+import { Database, RefreshCw, Table2, X, Sparkles, FileCode, Copy, Download, Upload, ArrowLeft } from "lucide-react";
 import {
   ListConnections,
   TestConnection,
@@ -10,6 +10,11 @@ import {
   RunSQLExecute,
   GenerateMockData,
   GenerateAPISchema,
+  ExportQueryResultsCSV,
+  ExportQueryResultsJSON,
+  PickCSVFile,
+  ReadCSVHeader,
+  ImportCSV,
 } from "../../wailsjs/go/main/App";
 import { main, engine } from "../../wailsjs/go/models";
 import { Button } from "../components/Button";
@@ -18,28 +23,76 @@ import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { DataGrid } from "../components/DataGrid";
 import { AiPanel } from "../components/AiPanel";
+import { Select } from "../components/Select";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { useToast } from "../components/Toast";
+import { useUIMode } from "../lib/uiMode";
 import { quoteIdent, sqlLiteral, buildSelectList } from "../lib/sql";
 import "./BrowserView.css";
 import "./TableView.css";
+import "./WebhookView.css"; // shares the mapping-row layout ImportCSVModal reuses
 
 const ROW_LIMIT = 100;
 
-export function TableView() {
+export function TableView({
+  initialTarget,
+  onConsumeInitialTarget,
+}: {
+  initialTarget?: { connection: string; database: string } | null;
+  onConsumeInitialTarget?: () => void;
+} = {}) {
+  const { mode } = useUIMode();
+  const beginner = mode === "beginner";
+  // Captured once at mount so a parent clearing initialTarget afterwards
+  // (via onConsumeInitialTarget) doesn't affect this already-mounted view.
+  const [pendingTarget] = useState(initialTarget ?? null);
   const [connections, setConnections] = useState<main.ConnectionInfo[]>([]);
   const [connection, setConnection] = useState("");
   const [databases, setDatabases] = useState<string[]>([]);
   const [database, setDatabase] = useState("");
   const [tables, setTables] = useState<main.TableInfo[] | null>(null);
   const [table, setTable] = useState("");
+  // Set when a foreign-key cell is clicked in RowsPanel: narrows the target
+  // table's rows down to the one being referenced, so "clicking a foreign
+  // value" really does jump to that row rather than just naming its table.
+  const [rowFilter, setRowFilter] = useState<{ column: string; cell: engine.Cell } | null>(null);
+  const [navStack, setNavStack] = useState<{ table: string; rowFilter: { column: string; cell: engine.Cell } | null }[]>([]);
   const toast = useToast();
+
+  function selectTable(name: string) {
+    setTable(name);
+    setRowFilter(null);
+    setNavStack([]);
+  }
+
+  function navigateToForeignRow(refTable: string, refColumn: string, cell: engine.Cell) {
+    setNavStack((s) => [...s, { table, rowFilter }]);
+    setTable(refTable);
+    setRowFilter({ column: refColumn, cell });
+  }
+
+  function navigateBack() {
+    setNavStack((s) => {
+      if (s.length === 0) return s;
+      const prev = s[s.length - 1];
+      setTable(prev.table);
+      setRowFilter(prev.rowFilter);
+      return s.slice(0, -1);
+    });
+  }
 
   useEffect(() => {
     ListConnections().then((conns) => {
       const sqlConns = conns.filter((c) => c.capabilities?.sql);
       setConnections(sqlConns);
-      if (sqlConns.length > 0) setConnection(sqlConns[0].name);
+      if (pendingTarget && sqlConns.some((c) => c.name === pendingTarget.connection)) {
+        setConnection(pendingTarget.connection);
+      } else if (sqlConns.length > 0) {
+        setConnection(sqlConns[0].name);
+      }
+      onConsumeInitialTarget?.();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
@@ -51,7 +104,11 @@ export function TableView() {
     TestConnection(connection)
       .then((dbs) => {
         setDatabases(dbs);
-        if (dbs.length > 0) setDatabase(dbs[0]);
+        if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
+          setDatabase(pendingTarget.database);
+        } else if (dbs.length > 0) {
+          setDatabase(dbs[0]);
+        }
       })
       .catch((e) => toast.push("error", String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -67,39 +124,38 @@ export function TableView() {
 
   useEffect(() => {
     setTable("");
+    setRowFilter(null);
+    setNavStack([]);
     loadTables();
   }, [loadTables]);
 
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">Tables</h1>
+        <h1 className="view-title">{beginner ? "My Data" : "Tables"}</h1>
       </div>
 
       {connections.length === 0 ? (
         <EmptyState
           icon={<Database size={32} />}
-          title="No SQL connections yet"
-          description="Add a PostgreSQL, MySQL, or SQLite connection to browse tables here."
+          title={beginner ? "No databases yet" : "No SQL connections yet"}
+          description={
+            beginner
+              ? "Connect a database from My Databases to see your data here."
+              : "Add a PostgreSQL, MySQL, or SQLite connection to browse tables here."
+          }
         />
       ) : (
         <>
           <div className="scope-picker">
-            <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-              {connections.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-              <option value="">{activeEngine === "postgres" ? "Select a schema" : "Select a database"}</option>
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+            <Select value={connection} onChange={setConnection} options={connections.map((c) => ({ value: c.name, label: c.name }))} />
+            <Select
+              value={database}
+              onChange={setDatabase}
+              disabled={databases.length === 0}
+              placeholder={activeEngine === "postgres" ? "Select a schema" : "Select a database"}
+              options={databases.map((d) => ({ value: d, label: d }))}
+            />
           </div>
 
           {connection && database && (
@@ -112,7 +168,7 @@ export function TableView() {
                 {tables?.length === 0 && <div className="browser-empty-hint">No tables yet.</div>}
                 {tables?.map((t) => (
                   <div key={t.name} className={`collection-item ${table === t.name ? "active" : ""}`}>
-                    <button className="collection-item-btn" onClick={() => setTable(t.name)}>
+                    <button className="collection-item-btn" onClick={() => selectTable(t.name)}>
                       <span className="collection-name mono">{t.name}</span>
                       <span className="collection-meta">~{t.rowCount} rows</span>
                     </button>
@@ -131,6 +187,11 @@ export function TableView() {
                     table={table}
                     engineId={activeEngine}
                     onMutated={loadTables}
+                    rowFilter={rowFilter}
+                    onClearFilter={() => setRowFilter(null)}
+                    canGoBack={navStack.length > 0}
+                    onBack={navigateBack}
+                    onNavigateToForeignRow={navigateToForeignRow}
                   />
                 )}
               </div>
@@ -148,12 +209,22 @@ function RowsPanel({
   table,
   engineId,
   onMutated,
+  rowFilter,
+  onClearFilter,
+  canGoBack,
+  onBack,
+  onNavigateToForeignRow,
 }: {
   connection: string;
   database: string;
   table: string;
   engineId: string;
   onMutated: () => void;
+  rowFilter: { column: string; cell: engine.Cell } | null;
+  onClearFilter: () => void;
+  canGoBack: boolean;
+  onBack: () => void;
+  onNavigateToForeignRow: (refTable: string, refColumn: string, cell: engine.Cell) => void;
 }) {
   const [schema, setSchema] = useState<engine.TableSchema | null>(null);
   const [schemaLoaded, setSchemaLoaded] = useState(false);
@@ -161,10 +232,10 @@ function RowsPanel({
   const [result, setResult] = useState<engine.SQLResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [queryError, setQueryError] = useState("");
-  const [peekRow, setPeekRow] = useState<{ table: string; result: engine.SQLResult | null; error: string } | null>(null);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [showMockAi, setShowMockAi] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const toast = useToast();
 
   const runQuery = useCallback(() => {
@@ -176,11 +247,16 @@ function RowsPanel({
     // column can be wrapped in ST_AsGeoJSON from the very first query
     // instead of showing raw WKB text and re-fetching a moment later.
     const cols = buildSelectList(engineId, schema?.columns);
-    RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident} LIMIT ${ROW_LIMIT}`)
+    // rowFilter narrows to the single referenced row after a foreign-key
+    // click navigated here — same query shape, just WHERE-qualified.
+    const whereClause = rowFilter
+      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type, engineId)}`
+      : "";
+    RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident}${whereClause} LIMIT ${ROW_LIMIT}`)
       .then(setResult)
       .catch((e) => setQueryError(String(e)))
       .finally(() => setLoading(false));
-  }, [connection, database, table, engineId, schema]);
+  }, [connection, database, table, engineId, schema, rowFilter]);
 
   useEffect(() => {
     setSchema(null);
@@ -214,8 +290,8 @@ function RowsPanel({
     const pkCell = result.rows[rowIndex][pkCol];
     if (!pkCell) return;
     const ident = quoteIdent(engineId, table);
-    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string")}`;
-    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string", engineId)}`;
+    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     try {
       // Always a WHERE-qualified single-row UPDATE, so it's never
       // classified Safe-Mode-dangerous — the confirm param only matters
@@ -229,22 +305,31 @@ function RowsPanel({
     }
   }
 
-  async function handleLinkClick(rowIndex: number, column: string, cell: engine.Cell) {
+  function handleLinkClick(rowIndex: number, column: string, cell: engine.Cell) {
     const fk = fkByColumn.get(column);
-    if (!fk || !result) return;
-    setPeekRow({ table: fk.refTable, result: null, error: "" });
-    try {
-      const ident = quoteIdent(engineId, fk.refTable);
-      const whereClause = `${quoteIdent(engineId, fk.refColumn)} = ${sqlLiteral(cell.display, cell.type)}`;
-      const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 1`);
-      setPeekRow({ table: fk.refTable, result: r, error: "" });
-    } catch (e) {
-      setPeekRow({ table: fk.refTable, result: null, error: String(e) });
-    }
+    if (!fk) return;
+    onNavigateToForeignRow(fk.refTable, fk.refColumn, cell);
   }
 
   return (
     <div>
+      {(canGoBack || rowFilter) && (
+        <div className="fk-nav-bar">
+          {canGoBack && (
+            <Button variant="ghost" onClick={onBack}>
+              <ArrowLeft size={14} /> Back
+            </Button>
+          )}
+          {rowFilter && (
+            <span className="fk-filter-chip">
+              Filtered: {rowFilter.column} = {rowFilter.cell.display}
+              <button className="icon-btn" onClick={onClearFilter} title="Clear filter, show all rows">
+                <X size={12} />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
       <div className="query-bar">
         <Button variant="ghost" onClick={runQuery}>
           <RefreshCw size={14} /> Refresh
@@ -254,6 +339,31 @@ function RowsPanel({
         </Button>
         <Button variant="ghost" onClick={() => setShowExport(true)}>
           <FileCode size={14} /> Export schema
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!result || result.rows.length === 0}
+          onClick={async () => {
+            if (!result) return;
+            const path = await ExportQueryResultsCSV(result, table);
+            if (path) toast.push("success", `Exported to ${path}`);
+          }}
+        >
+          <Download size={14} /> Export CSV
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!result || result.rows.length === 0}
+          onClick={async () => {
+            if (!result) return;
+            const path = await ExportQueryResultsJSON(result, table);
+            if (path) toast.push("success", `Exported to ${path}`);
+          }}
+        >
+          <Download size={14} /> Export JSON
+        </Button>
+        <Button variant="ghost" onClick={() => setShowImport(true)}>
+          <Upload size={14} /> Import CSV
         </Button>
         {pkColumns.length !== 1 && (
           <span className="table-pk-hint">
@@ -288,17 +398,6 @@ function RowsPanel({
         />
       )}
 
-      {peekRow && (
-        <Modal title={`${peekRow.table} — referenced row`} onClose={() => setPeekRow(null)}>
-          {peekRow.error && <div className="query-error">{peekRow.error}</div>}
-          {!peekRow.error && !peekRow.result && <Skeleton height={120} />}
-          {peekRow.result && peekRow.result.rows.length === 0 && <EmptyState icon={<Database size={24} />} title="Referenced row not found" />}
-          {peekRow.result && peekRow.result.rows.length > 0 && (
-            <DataGrid columns={peekRow.result.columns} rows={peekRow.result.rows} />
-          )}
-        </Modal>
-      )}
-
       {showMockAi && (
         <AiPanel
           title={`Generate mock data for ${table}`}
@@ -315,6 +414,22 @@ function RowsPanel({
 
       {showExport && (
         <ExportSchemaModal connection={connection} database={database} table={table} onClose={() => setShowExport(false)} />
+      )}
+
+      {showImport && (
+        <ImportCSVModal
+          connection={connection}
+          database={database}
+          table={table}
+          engineId={engineId}
+          schema={schema}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            setShowImport(false);
+            runQuery();
+            onMutated();
+          }}
+        />
       )}
     </div>
   );
@@ -370,13 +485,139 @@ function ExportSchemaModal({
     >
       <div className="field">
         <label className="field-label">Format</label>
-        <select className="input" value={format} onChange={(e) => setFormat(e.target.value as typeof format)}>
-          <option value="openapi">OpenAPI (YAML)</option>
-          <option value="typescript">TypeScript interface</option>
-          <option value="pydantic">Pydantic model</option>
-        </select>
+        <SegmentedControl
+          value={format}
+          onChange={(v) => setFormat(v as typeof format)}
+          options={[
+            { value: "openapi", label: "OpenAPI (YAML)" },
+            { value: "typescript", label: "TypeScript" },
+            { value: "pydantic", label: "Pydantic" },
+          ]}
+        />
       </div>
       {loading ? <Skeleton height={160} /> : <pre className="ai-output mono">{code}</pre>}
+    </Modal>
+  );
+}
+
+// ImportCSVModal reuses WebhookView's InsertPayloadModal pattern: pick a
+// source (a CSV file's header row here, instead of a webhook payload's
+// top-level keys), auto-match to table columns case-insensitively, and let
+// the user override per-column before running the real import.
+function ImportCSVModal({
+  connection,
+  database,
+  table,
+  engineId,
+  schema,
+  onClose,
+  onImported,
+}: {
+  connection: string;
+  database: string;
+  table: string;
+  engineId: string;
+  schema: engine.TableSchema | null;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [path, setPath] = useState("");
+  const [header, setHeader] = useState<string[]>([]);
+  const [hasHeaderRow, setHasHeaderRow] = useState(true);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  async function pickFile() {
+    const p = await PickCSVFile();
+    if (!p) return;
+    setPath(p);
+    setError("");
+    try {
+      const h = await ReadCSVHeader(p);
+      setHeader(h);
+      const nextMapping: Record<string, string> = {};
+      for (const col of schema?.columns ?? []) {
+        const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
+        if (match) nextMapping[col.name] = match;
+      }
+      setMapping(nextMapping);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function submit() {
+    if (Object.keys(mapping).length === 0) {
+      toast.push("error", "Map at least one column to a CSV field");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const n = await ImportCSV(connection, database, table, path, engineId, hasHeaderRow, mapping);
+      toast.push("success", `Imported ${n} row${n === 1 ? "" : "s"}`);
+      onImported();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Import CSV — ${table}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={busy || !path || Object.keys(mapping).length === 0}>
+            {busy ? "Importing..." : "Import"}
+          </Button>
+        </>
+      }
+    >
+      {error && <div className="query-error">{error}</div>}
+      <div className="field">
+        <Button variant="ghost" onClick={pickFile} disabled={busy}>
+          <Upload size={14} /> {path ? "Change file" : "Choose CSV file"}
+        </Button>
+        {path && <span className="mono webhook-addr">{path}</span>}
+      </div>
+      {path && (
+        <div className="field">
+          <label className="field-label">
+            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => setHasHeaderRow(e.target.checked)} /> First row is a
+            header
+          </label>
+        </div>
+      )}
+      {path && !hasHeaderRow && (
+        <div className="query-error">Uncheck only if the file has no header row — column mapping needs header names to match against.</div>
+      )}
+      {path && header.length > 0 && (
+        <div className="field">
+          <label className="field-label">Column mapping</label>
+          <div className="webhook-mapping-list">
+            {(schema?.columns ?? []).map((c) => (
+              <div key={c.name} className="webhook-mapping-row">
+                <span className="mono">{c.name}</span>
+                <span className="webhook-mapping-arrow">←</span>
+                <Select
+                  value={mapping[c.name] ?? ""}
+                  onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
+                  placeholder="(skip)"
+                  options={header.map((h) => ({ value: h, label: h }))}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -410,7 +651,7 @@ function RelationshipInspector({
     setChildRows(null);
     referencingTables.forEach((ref) => {
       const ident = quoteIdent(engineId, ref.table);
-      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
       RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`)
         .then((r) => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length })))
         .catch(() => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" })));
@@ -429,7 +670,7 @@ function RelationshipInspector({
     setChildRows(null);
     if (!pkCell) return;
     const ident = quoteIdent(engineId, ref.table);
-    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
     setChildRows(r);
   }

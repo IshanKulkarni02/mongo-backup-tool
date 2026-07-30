@@ -32,7 +32,10 @@ type Config struct {
 	HostKeyFingerprint string
 }
 
-const dialTimeout = 10 * time.Second
+// dialTimeout bounds both the TCP dial and the SSH handshake in Open. A
+// var (not a const) so tests can shrink it instead of waiting out the
+// real default when exercising a bastion that stalls on purpose.
+var dialTimeout = 10 * time.Second
 
 // Tunnel holds one live SSH connection. Dial opens a new logical
 // connection to a target address through it; Close tears down the
@@ -60,15 +63,45 @@ func Open(ctx context.Context, cfg Config) (*Tunnel, error) {
 		Timeout:         dialTimeout,
 	}
 
+	// clientCfg.Timeout above only takes effect inside the ssh package's
+	// own Dial() convenience wrapper — this code calls NewClientConn
+	// directly (below), so that field is dead configuration and has zero
+	// effect on either the TCP dial or the handshake that follows. Every
+	// real call site in this codebase passes context.Background() (no
+	// deadline of its own), so without an explicit bound here, a bastion
+	// that accepts the TCP connection but stalls during key
+	// exchange/auth hangs the connection attempt forever with no way to
+	// cancel it. deadlineCtx guarantees an upper bound regardless of
+	// what the caller passes: context.WithTimeout takes whichever of the
+	// two deadlines is sooner, so a caller-supplied shorter deadline
+	// still wins.
+	deadlineCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", host)
+	conn, err := d.DialContext(deadlineCtx, "tcp", host)
 	if err != nil {
 		return nil, fmt.Errorf("dialing SSH bastion %s: %w", host, err)
+	}
+
+	// NewClientConn's handshake is synchronous with no context support,
+	// so a deadline on the raw connection is the only way to bound it.
+	// Set one before the handshake, then clear it once NewClientConn
+	// returns — otherwise the deadline would also apply to the tunnel's
+	// ongoing data transfer after setup completes.
+	deadline, _ := deadlineCtx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("setting SSH handshake deadline for %s: %w", host, err)
 	}
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, host, clientCfg)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("SSH handshake with %s: %w", host, err)
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		sshConn.Close()
+		return nil, fmt.Errorf("clearing SSH handshake deadline for %s: %w", host, err)
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 	return &Tunnel{client: client}, nil

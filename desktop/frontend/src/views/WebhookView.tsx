@@ -20,6 +20,7 @@ import { Input } from "../components/Input";
 import { Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { JsonTree } from "../components/JsonTree";
+import { Select } from "../components/Select";
 import { useToast } from "../components/Toast";
 import { quoteIdent, sqlLiteral } from "../lib/sql";
 import "./BrowserView.css";
@@ -57,6 +58,7 @@ export function WebhookView() {
   const [running, setRunning] = useState(false);
   const [port, setPort] = useState("8089");
   const [addr, setAddr] = useState("");
+  const [token, setToken] = useState("");
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [insertTarget, setInsertTarget] = useState<WebhookRequest | null>(null);
   const toast = useToast();
@@ -79,10 +81,11 @@ export function WebhookView() {
       return;
     }
     try {
-      const a = await StartWebhookListener(p);
-      setAddr(a);
+      const info = await StartWebhookListener(p);
+      setAddr(info.addr);
+      setToken(info.token);
       setRunning(true);
-      toast.push("success", `Listening on ${a}`);
+      toast.push("success", `Listening on ${info.addr}`);
     } catch (e) {
       toast.push("error", String(e));
     }
@@ -105,7 +108,9 @@ export function WebhookView() {
       </div>
       <p className="webhook-hint">
         Point a device that pushes data over HTTP (e.g. a biometric terminal's ADMS push protocol) at this listener
-        to see exactly what it sends before wiring up a real integration.
+        to see exactly what it sends before wiring up a real integration. The listener only accepts localhost
+        connections and requires the auth token below on every request — a device that can't send a custom header
+        can't use this listener.
       </p>
 
       <div className="query-bar">
@@ -126,6 +131,12 @@ export function WebhookView() {
           </Button>
         )}
       </div>
+
+      {running && token && (
+        <p className="webhook-hint mono">
+          Send header <strong>X-Dbhelm-Webhook-Token: {token}</strong> with every request, or it's refused with 401.
+        </p>
+      )}
 
       {requests.length === 0 && (
         <EmptyState
@@ -259,7 +270,7 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
         .map((c) => {
           const raw = flatFields[mapping[c.name]] ?? "";
           const looksNumeric = /^-?\d+(\.\d+)?$/.test(raw.trim());
-          return sqlLiteral(raw, looksNumeric ? "number" : "string");
+          return sqlLiteral(raw, looksNumeric ? "number" : "string", activeEngine);
         })
         .join(", ");
       const sql = `INSERT INTO ${ident} (${cols}) VALUES (${vals})`;
@@ -293,36 +304,30 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       {parseError && <div className="query-error">{parseError}</div>}
       <div className="field">
         <label className="field-label">Connection</label>
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name} ({c.engine})
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: `${c.name} (${c.engine})` }))}
+        />
       </div>
       <div className="field">
         <label className="field-label">{activeEngine === "postgres" ? "Schema" : "Database"}</label>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)}>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={databases.map((d) => ({ value: d, label: d }))}
+        />
       </div>
 
       {isMongo && (
         <div className="field">
           <label className="field-label">Collection</label>
-          <select className="input" value={collection} onChange={(e) => setCollection(e.target.value)}>
-            <option value="">Select a collection</option>
-            {collections.map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={collection}
+            onChange={setCollection}
+            options={collections.map((c) => ({ value: c.name, label: c.name }))}
+            placeholder="Select a collection"
+          />
         </div>
       )}
 
@@ -330,14 +335,12 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
         <>
           <div className="field">
             <label className="field-label">Table</label>
-            <select className="input" value={table} onChange={(e) => setTable(e.target.value)}>
-              <option value="">Select a table</option>
-              {tables.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={table}
+              onChange={setTable}
+              options={tables.map((t) => ({ value: t.name, label: t.name }))}
+              placeholder="Select a table"
+            />
           </div>
           {schema && fieldKeys.length === 0 && (
             <div className="query-error">This payload has no top-level fields to map (it may be an array or empty object).</div>
@@ -350,18 +353,12 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
                   <div key={c.name} className="webhook-mapping-row">
                     <span className="mono">{c.name}</span>
                     <span className="webhook-mapping-arrow">←</span>
-                    <select
-                      className="input"
+                    <Select
                       value={mapping[c.name] ?? ""}
-                      onChange={(e) => setMapping((m) => ({ ...m, [c.name]: e.target.value }))}
-                    >
-                      <option value="">(skip)</option>
-                      {fieldKeys.map((k) => (
-                        <option key={k} value={k}>
-                          {k}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
+                      options={fieldKeys.map((k) => ({ value: k, label: k }))}
+                      placeholder="(skip)"
+                    />
                   </div>
                 ))}
               </div>

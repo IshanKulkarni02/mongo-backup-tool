@@ -33,6 +33,24 @@ func findGitLFS() (string, error) {
 	return path, nil
 }
 
+// validateArg rejects a user-supplied git argument (a remote name, URL, or
+// branch) that looks like an option rather than a plain value — e.g. a URL
+// of "--upload-pack=some-command" — which would otherwise let it be
+// interpreted as a flag by the git subcommand it's passed to instead of the
+// literal positional value the user intended. Combined with the "--"
+// separator inserted before positional arguments below, this closes off
+// git's classic option-injection vector for values that ultimately come
+// from user-editable UI fields (see desktop/remote.go).
+func validateArg(kind, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", kind)
+	}
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("%s must not start with '-': %q", kind, value)
+	}
+	return nil
+}
+
 func run(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -67,7 +85,7 @@ func Init(scope string) error {
 		// init.defaultBranch says otherwise). Push/Pull/Clone all default to
 		// "main" too (see cmd/remote.go's --branch flags); if the local
 		// repo's actual first branch ended up named something else, the
-		// very first `mongobak remote push` would fail outright with "src
+		// very first `dbhelm remote push` would fail outright with "src
 		// refspec main does not match any" before any content ever reached
 		// the remote.
 		if _, err := run(scope, git, "init", "-b", "main"); err != nil {
@@ -110,12 +128,18 @@ func Init(scope string) error {
 
 // AddRemote adds a named git remote, or updates its URL if the name already exists.
 func AddRemote(scope, name, url string) error {
+	if err := validateArg("remote name", name); err != nil {
+		return err
+	}
+	if err := validateArg("remote URL", url); err != nil {
+		return err
+	}
 	git, err := findGit()
 	if err != nil {
 		return err
 	}
-	if _, err := run(scope, git, "remote", "add", name, url); err != nil {
-		if _, err := run(scope, git, "remote", "set-url", name, url); err != nil {
+	if _, err := run(scope, git, "remote", "add", "--", name, url); err != nil {
+		if _, err := run(scope, git, "remote", "set-url", "--", name, url); err != nil {
 			return fmt.Errorf("setting remote %s: %w", name, err)
 		}
 	}
@@ -125,6 +149,12 @@ func AddRemote(scope, name, url string) error {
 // Push commits everything currently in the scope directory and pushes it to
 // the given remote/branch.
 func Push(scope, remoteName, branch, message string) error {
+	if err := validateArg("remote name", remoteName); err != nil {
+		return err
+	}
+	if err := validateArg("branch", branch); err != nil {
+		return err
+	}
 	git, err := findGit()
 	if err != nil {
 		return err
@@ -135,7 +165,7 @@ func Push(scope, remoteName, branch, message string) error {
 	if out, err := run(scope, git, "commit", "-m", message); err != nil && !strings.Contains(out, "nothing to commit") {
 		return fmt.Errorf("git commit: %w", err)
 	}
-	if _, err := run(scope, git, "push", "-u", remoteName, branch); err != nil {
+	if _, err := run(scope, git, "push", "-u", "--", remoteName, branch); err != nil {
 		return fmt.Errorf("git push: %w", err)
 	}
 	return nil
@@ -143,11 +173,17 @@ func Push(scope, remoteName, branch, message string) error {
 
 // Pull fetches and merges from the given remote/branch.
 func Pull(scope, remoteName, branch string) error {
+	if err := validateArg("remote name", remoteName); err != nil {
+		return err
+	}
+	if err := validateArg("branch", branch); err != nil {
+		return err
+	}
 	git, err := findGit()
 	if err != nil {
 		return err
 	}
-	if _, err := run(scope, git, "pull", remoteName, branch); err != nil {
+	if _, err := run(scope, git, "pull", "--", remoteName, branch); err != nil {
 		return fmt.Errorf("git pull: %w", err)
 	}
 	return nil
@@ -156,7 +192,7 @@ func Pull(scope, remoteName, branch string) error {
 // Clone clones an existing remote snapshot history into a scope directory,
 // checking out the given branch explicitly rather than relying on the
 // remote's default HEAD — a freshly created bare or remote repo may still
-// default to "master" (or have no default at all) even though mongobak
+// default to "master" (or have no default at all) even though dbhelm
 // always pushes to "main", which would otherwise clone an empty tree.
 //
 // git requires the target directory to not exist, or be genuinely empty —
@@ -170,6 +206,12 @@ func Pull(scope, remoteName, branch string) error {
 // subsequent scope lookup re-creates it); anything else in the directory
 // still means "already has content" and is rejected.
 func Clone(url, scope, branch string) error {
+	if err := validateArg("remote URL", url); err != nil {
+		return err
+	}
+	if err := validateArg("branch", branch); err != nil {
+		return err
+	}
 	git, err := findGit()
 	if err != nil {
 		return err
@@ -188,7 +230,7 @@ func Clone(url, scope, branch string) error {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	if _, err := run(parent, git, "clone", "--branch", branch, url, scope); err != nil {
+	if _, err := run(parent, git, "clone", "--branch", branch, "--", url, scope); err != nil {
 		return fmt.Errorf("git clone: %w", err)
 	}
 

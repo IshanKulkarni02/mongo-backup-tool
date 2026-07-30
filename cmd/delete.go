@@ -3,12 +3,12 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 var deleteCmd = &cobra.Command{
@@ -28,7 +28,11 @@ var deleteCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("no backup with id %q", args[0])
 		}
-		if err := os.Remove(filepath.Join(backupsDir, bk.FileName)); err != nil && !os.IsNotExist(err) {
+		archivePath, err := pathsafety.SafeJoin(backupsDir, bk.FileName)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		idx.Remove(args[0])

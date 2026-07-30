@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
 )
 
 // DependencyStatus mirrors depmanager.Status with a JSON-friendly shape for

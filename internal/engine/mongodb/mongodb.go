@@ -12,8 +12,9 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"golang.org/x/sync/errgroup"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 func init() {
@@ -98,6 +99,12 @@ func (s *Session) ListDatabases(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// namespaceStatsConcurrency bounds how many collStats calls ListNamespaces
+// runs at once — high enough that a database with hundreds of collections
+// doesn't take one round-trip per collection serially, low enough not to
+// flood the connection pool or a rate-limited Atlas cluster.
+const namespaceStatsConcurrency = 8
+
 // ListNamespaces returns every collection in a database with its document
 // count and storage size.
 func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine.NamespaceInfo, error) {
@@ -110,22 +117,30 @@ func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine
 		return nil, err
 	}
 
-	out := make([]engine.NamespaceInfo, 0, len(names))
-	for _, name := range names {
-		var stats bson.M
-		if err := db.RunCommand(ctx, bson.D{{Key: "collStats", Value: name}}).Decode(&stats); err != nil {
-			out = append(out, engine.NamespaceInfo{Name: name})
-			continue
-		}
-		info := engine.NamespaceInfo{Name: name}
-		if v, ok := stats["count"]; ok {
-			info.DocCount = toInt64(v)
-		}
-		if v, ok := stats["storageSize"]; ok {
-			info.StorageSize = toInt64(v)
-		}
-		out = append(out, info)
+	out := make([]engine.NamespaceInfo, len(names))
+	var g errgroup.Group
+	g.SetLimit(namespaceStatsConcurrency)
+	for i, name := range names {
+		g.Go(func() error {
+			info := engine.NamespaceInfo{Name: name}
+			var stats bson.M
+			// A failed collStats (permissions, a view instead of a real
+			// collection, etc.) just falls back to zeroed counts rather
+			// than dropping the collection from the list or failing the
+			// whole call.
+			if err := db.RunCommand(ctx, bson.D{{Key: "collStats", Value: name}}).Decode(&stats); err == nil {
+				if v, ok := stats["count"]; ok {
+					info.DocCount = toInt64(v)
+				}
+				if v, ok := stats["storageSize"]; ok {
+					info.StorageSize = toInt64(v)
+				}
+			}
+			out[i] = info
+			return nil
+		})
 	}
+	_ = g.Wait() // every goroutine above always returns nil; nothing to propagate
 	return out, nil
 }
 

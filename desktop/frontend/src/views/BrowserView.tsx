@@ -23,7 +23,10 @@ import { EmptyState } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
 import { JsonTree } from "../components/JsonTree";
+import { FriendlyDoc } from "../components/FriendlyDoc";
 import { useToast } from "../components/Toast";
+import { useUIMode } from "../lib/uiMode";
+import { Select } from "../components/Select";
 import "./BrowserView.css";
 
 function humanSize(n: number): string {
@@ -51,7 +54,17 @@ function extractID(docText: string): string | null {
 
 const PAGE_SIZE = 25;
 
-export function BrowserView() {
+export function BrowserView({
+  initialTarget,
+  onConsumeInitialTarget,
+}: {
+  initialTarget?: { connection: string; database: string } | null;
+  onConsumeInitialTarget?: () => void;
+} = {}) {
+  const { mode } = useUIMode();
+  // Captured once at mount so a parent clearing initialTarget afterwards
+  // (via onConsumeInitialTarget) doesn't affect this already-mounted view.
+  const [pendingTarget] = useState(initialTarget ?? null);
   const [connections, setConnections] = useState<main.ConnectionInfo[]>([]);
   const [connection, setConnection] = useState("");
   const [databases, setDatabases] = useState<string[]>([]);
@@ -66,8 +79,14 @@ export function BrowserView() {
   useEffect(() => {
     ListConnections().then((conns) => {
       setConnections(conns);
-      if (conns.length > 0) setConnection(conns[0].name);
+      if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
+        setConnection(pendingTarget.connection);
+      } else if (conns.length > 0) {
+        setConnection(conns[0].name);
+      }
+      onConsumeInitialTarget?.();
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -75,7 +94,12 @@ export function BrowserView() {
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
-      .then(setDatabases)
+      .then((dbs) => {
+        setDatabases(dbs);
+        if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
+          setDatabase(pendingTarget.database);
+        }
+      })
       .catch((e) => toast.push("error", String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
@@ -107,51 +131,61 @@ export function BrowserView() {
     }
   }
 
+  const beginner = mode === "beginner";
+
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">Browser</h1>
+        <h1 className="view-title">{beginner ? "My Data" : "Browser"}</h1>
       </div>
 
       <div className="scope-picker">
-        <select className="input" value={connection} onChange={(e) => setConnection(e.target.value)}>
-          {connections.length === 0 && <option value="">No connections</option>}
-          {connections.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select className="input" value={database} onChange={(e) => setDatabase(e.target.value)} disabled={databases.length === 0}>
-          <option value="">Select a database</option>
-          {databases.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={connection}
+          onChange={setConnection}
+          options={connections.map((c) => ({ value: c.name, label: c.name }))}
+          placeholder="No connections"
+          disabled={connections.length === 0}
+        />
+        <Select
+          value={database}
+          onChange={setDatabase}
+          options={databases.map((d) => ({ value: d, label: d }))}
+          placeholder="Select a database"
+          disabled={databases.length === 0}
+        />
       </div>
 
       {connection && database && (
         <div className="browser-layout">
           <div className="browser-sidebar">
             <div className="browser-sidebar-header">
-              <span>Collections</span>
-              <button className="icon-btn" onClick={() => setShowNewCollection(true)} title="New collection">
+              <span>{beginner ? "Groups" : "Collections"}</span>
+              <button
+                className="icon-btn"
+                onClick={() => setShowNewCollection(true)}
+                title={beginner ? "Add a group" : "New collection"}
+              >
                 <Plus size={14} />
               </button>
             </div>
             {collections === null && <Skeleton height={80} />}
-            {collections?.length === 0 && <div className="browser-empty-hint">No collections yet.</div>}
+            {collections?.length === 0 && (
+              <div className="browser-empty-hint">{beginner ? "No groups yet." : "No collections yet."}</div>
+            )}
             {collections?.map((c) => (
               <div key={c.name} className={`collection-item ${collection === c.name ? "active" : ""}`}>
                 <button className="collection-item-btn" onClick={() => setCollection(c.name)}>
                   <span className="collection-name mono">{c.name}</span>
                   <span className="collection-meta">
-                    {c.docCount} docs · {humanSize(c.storageSize)}
+                    {c.docCount} {beginner ? "records" : "docs"} · {humanSize(c.storageSize)}
                   </span>
                 </button>
-                <button className="icon-btn danger" onClick={() => setDropTarget(c.name)} title="Drop collection">
+                <button
+                  className="icon-btn danger"
+                  onClick={() => setDropTarget(c.name)}
+                  title={beginner ? "Delete group" : "Drop collection"}
+                >
                   <Trash2 size={13} />
                 </button>
               </div>
@@ -160,22 +194,32 @@ export function BrowserView() {
 
           <div className="browser-main">
             {!collection && (
-              <EmptyState icon={<Database size={32} />} title="Select a collection" description="Pick a collection on the left to browse its documents." />
+              <EmptyState
+                icon={<Database size={32} />}
+                title={beginner ? "Select a group" : "Select a collection"}
+                description={
+                  beginner
+                    ? "Pick a group on the left to see what's inside."
+                    : "Pick a collection on the left to browse its documents."
+                }
+              />
             )}
             {collection && (
               <>
-                <div className="browser-tabs">
-                  <button className={`tab-btn ${tab === "documents" ? "active" : ""}`} onClick={() => setTab("documents")}>
-                    <Table2 size={14} /> Documents
-                  </button>
-                  <button className={`tab-btn ${tab === "indexes" ? "active" : ""}`} onClick={() => setTab("indexes")}>
-                    <ListTree size={14} /> Indexes
-                  </button>
-                </div>
-                {tab === "documents" && (
+                {!beginner && (
+                  <div className="browser-tabs">
+                    <button className={`tab-btn ${tab === "documents" ? "active" : ""}`} onClick={() => setTab("documents")}>
+                      <Table2 size={14} /> Documents
+                    </button>
+                    <button className={`tab-btn ${tab === "indexes" ? "active" : ""}`} onClick={() => setTab("indexes")}>
+                      <ListTree size={14} /> Indexes
+                    </button>
+                  </div>
+                )}
+                {(beginner || tab === "documents") && (
                   <DocumentsPanel connection={connection} database={database} collection={collection} onMutated={loadCollections} />
                 )}
-                {tab === "indexes" && <IndexesPanel connection={connection} database={database} collection={collection} />}
+                {!beginner && tab === "indexes" && <IndexesPanel connection={connection} database={database} collection={collection} />}
               </>
             )}
           </div>
@@ -184,9 +228,13 @@ export function BrowserView() {
 
       {dropTarget && (
         <ConfirmDialog
-          title="Drop collection"
-          message={`Permanently delete collection "${dropTarget}" and all its documents? This cannot be undone.`}
-          confirmLabel="Drop"
+          title={beginner ? "Delete group" : "Drop collection"}
+          message={
+            beginner
+              ? `Permanently delete "${dropTarget}" and everything in it? This cannot be undone.`
+              : `Permanently delete collection "${dropTarget}" and all its documents? This cannot be undone.`
+          }
+          confirmLabel={beginner ? "Delete" : "Drop"}
           danger
           onConfirm={handleDropCollection}
           onCancel={() => setDropTarget(null)}
@@ -221,6 +269,8 @@ function NewCollectionModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const { mode } = useUIMode();
+  const beginner = mode === "beginner";
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -230,7 +280,7 @@ function NewCollectionModal({
     setBusy(true);
     try {
       await CreateCollection(connection, database, name);
-      toast.push("success", `Created collection "${name}"`);
+      toast.push("success", beginner ? `Created "${name}"` : `Created collection "${name}"`);
       onCreated();
     } catch (e) {
       toast.push("error", String(e));
@@ -241,7 +291,7 @@ function NewCollectionModal({
 
   return (
     <Modal
-      title="New collection"
+      title={beginner ? "Add a group" : "New collection"}
       onClose={onClose}
       footer={
         <>
@@ -254,7 +304,7 @@ function NewCollectionModal({
         </>
       }
     >
-      <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      <Input label={beginner ? "Group name" : "Name"} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
     </Modal>
   );
 }
@@ -270,6 +320,8 @@ function DocumentsPanel({
   collection: string;
   onMutated: () => void;
 }) {
+  const { mode } = useUIMode();
+  const beginner = mode === "beginner";
   const [filter, setFilter] = useState("{}");
   const [sort, setSort] = useState("");
   const [skip, setSkip] = useState(0);
@@ -278,6 +330,8 @@ function DocumentsPanel({
   const [queryError, setQueryError] = useState("");
   const [editing, setEditing] = useState<{ text: string; isNew: boolean } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"friendly" | "json">("friendly");
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const toast = useToast();
 
   const runQuery = useCallback(() => {
@@ -303,12 +357,12 @@ function DocumentsPanel({
     try {
       if (editing.isNew) {
         await InsertDocument(connection, database, collection, editing.text);
-        toast.push("success", "Document inserted");
+        toast.push("success", beginner ? "Record added" : "Document inserted");
       } else {
         const id = extractID(editing.text);
         if (!id) throw new Error("Document must include _id");
         await UpdateDocument(connection, database, collection, id, editing.text);
-        toast.push("success", "Document saved");
+        toast.push("success", beginner ? "Record saved" : "Document saved");
       }
       setEditing(null);
       runQuery();
@@ -322,7 +376,7 @@ function DocumentsPanel({
     if (!deleteTarget) return;
     try {
       await DeleteDocument(connection, database, collection, deleteTarget);
-      toast.push("success", "Document deleted");
+      toast.push("success", beginner ? "Record deleted" : "Document deleted");
       runQuery();
       onMutated();
     } catch (e) {
@@ -338,16 +392,49 @@ function DocumentsPanel({
 
   return (
     <div>
-      <div className="query-bar">
-        <Input placeholder="Filter (Extended JSON), e.g. {}" mono value={filter} onChange={(e) => setFilter(e.target.value)} />
-        <Input placeholder="Sort, e.g. {&quot;createdAt&quot;:-1}" mono value={sort} onChange={(e) => setSort(e.target.value)} />
-        <Button variant="ghost" onClick={() => (skip === 0 ? runQuery() : setSkip(0))}>
-          <RefreshCw size={14} /> Run
-        </Button>
-        <Button onClick={() => setEditing({ text: '{\n  \n}', isNew: true })}>
-          <Plus size={14} /> Insert
-        </Button>
-      </div>
+      {beginner ? (
+        <div className="query-bar-beginner">
+          <button className="advanced-search-toggle" onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}>
+            {showAdvancedSearch ? "Hide search" : "Search / filter records"}
+          </button>
+          <Button onClick={() => setEditing({ text: '{\n  \n}', isNew: true })}>
+            <Plus size={14} /> Add new record
+          </Button>
+        </div>
+      ) : (
+        <div className="query-bar">
+          <Input placeholder="Filter (Extended JSON), e.g. {}" mono value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <Input placeholder="Sort, e.g. {&quot;createdAt&quot;:-1}" mono value={sort} onChange={(e) => setSort(e.target.value)} />
+          <Button variant="ghost" onClick={() => (skip === 0 ? runQuery() : setSkip(0))}>
+            <RefreshCw size={14} /> Run
+          </Button>
+          <Button onClick={() => setEditing({ text: '{\n  \n}', isNew: true })}>
+            <Plus size={14} /> Insert
+          </Button>
+        </div>
+      )}
+
+      {beginner && showAdvancedSearch && (
+        <div className="query-bar-advanced">
+          <Input
+            label="Filter (advanced, technical)"
+            placeholder="{}"
+            mono
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <Input
+            label="Sort (advanced, technical)"
+            placeholder='{"createdAt":-1}'
+            mono
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+          />
+          <Button variant="ghost" onClick={() => (skip === 0 ? runQuery() : setSkip(0))}>
+            <RefreshCw size={14} /> Search
+          </Button>
+        </div>
+      )}
 
       {queryError && <div className="query-error">{queryError}</div>}
 
@@ -360,14 +447,31 @@ function DocumentsPanel({
       )}
 
       {!loading && result && result.documents.length === 0 && !queryError && (
-        <EmptyState icon={<Database size={28} />} title="No matching documents" />
+        <EmptyState
+          icon={<Database size={28} />}
+          title={beginner ? "No records here yet" : "No matching documents"}
+        />
+      )}
+
+      {!loading && !beginner && result && result.documents.length > 0 && (
+        <div className="doc-view-toggle">
+          <button
+            className={`tab-btn ${viewMode === "friendly" ? "active" : ""}`}
+            onClick={() => setViewMode("friendly")}
+          >
+            Simple
+          </button>
+          <button className={`tab-btn ${viewMode === "json" ? "active" : ""}`} onClick={() => setViewMode("json")}>
+            JSON
+          </button>
+        </div>
       )}
 
       <div className="doc-list">
         {!loading &&
           result?.documents.map((doc, i) => (
             <Card key={i} className="doc-row">
-              <JsonTree json={doc} />
+              {beginner || viewMode === "friendly" ? <FriendlyDoc json={doc} /> : <JsonTree json={doc} />}
               <div className="doc-actions">
                 <Button variant="ghost" onClick={() => setEditing({ text: doc, isNew: false })}>
                   <Pencil size={14} />
@@ -402,7 +506,15 @@ function DocumentsPanel({
 
       {editing && (
         <Modal
-          title={editing.isNew ? "Insert document" : "Edit document"}
+          title={
+            beginner
+              ? editing.isNew
+                ? "Add a new record"
+                : "Edit record"
+              : editing.isNew
+              ? "Insert document"
+              : "Edit document"
+          }
           onClose={() => setEditing(null)}
           footer={
             <>
@@ -413,6 +525,12 @@ function DocumentsPanel({
             </>
           }
         >
+          {beginner && (
+            <p className="doc-editor-hint">
+              Records are written in a technical format called JSON — keep the {"{ }"} and quotes as they are, just
+              change the values.
+            </p>
+          )}
           <textarea
             className="doc-editor mono"
             value={editing.text}
@@ -425,8 +543,8 @@ function DocumentsPanel({
 
       {deleteTarget && (
         <ConfirmDialog
-          title="Delete document"
-          message="Delete this document? This cannot be undone."
+          title={beginner ? "Delete record" : "Delete document"}
+          message={beginner ? "Delete this record? This cannot be undone." : "Delete this document? This cannot be undone."}
           confirmLabel="Delete"
           danger
           onConfirm={handleDelete}

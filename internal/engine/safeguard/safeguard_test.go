@@ -21,10 +21,15 @@ func TestClassify(t *testing.T) {
 		{"truncate", "TRUNCATE TABLE users", RiskDangerous},
 		{"alter table", "ALTER TABLE users DROP COLUMN email", RiskDangerous},
 
-		// A literal "where" inside a string/comment must not be mistaken
-		// for a real WHERE clause... but note our regex-based classifier
-		// can't tell the difference — this documents the known limitation
-		// rather than asserting an unsafe false negative is caught.
+		// A quoted "where" is data, not a real WHERE clause — an unbounded
+		// DELETE/UPDATE must still classify as dangerous even if a string
+		// literal happens to contain the word.
+		{"delete no where, word in literal", "DELETE FROM logs RETURNING 'no where clause here'", RiskDangerous},
+		{"update no where, word in literal", "UPDATE users SET note = 'the where clause'", RiskDangerous},
+
+		// "WHERE true" is a real (if vacuous) WHERE clause — the
+		// classifier can't judge truthiness, so this documents a known,
+		// separate limitation rather than the quoted-literal bypass above.
 		{"delete where true", "DELETE FROM users WHERE true", RiskConfirm},
 
 		// Leading comments must not hide the real verb.
@@ -45,6 +50,11 @@ func TestClassify(t *testing.T) {
 		{"cte then delete with where", "WITH x AS (SELECT 1) DELETE FROM users WHERE id = 1", RiskConfirm},
 		{"cte then select", "WITH x AS (SELECT 1) SELECT * FROM x", RiskNone},
 
+		// CTEs: a quoted verb-shaped word after the real statement must not
+		// shift which verb — or WHERE-clause presence — gets evaluated.
+		{"cte then delete no where, verb word in literal", "WITH x AS (SELECT 1) DELETE FROM logs RETURNING 'insert a note'", RiskDangerous},
+		{"cte then update no where, where word in literal", "WITH x AS (SELECT 1) UPDATE users SET note = 'the where clause'", RiskDangerous},
+
 		// Multiple statements: DROP anywhere should still flag dangerous
 		// even if it's not the first keyword after a CTE-less statement.
 		{"select then drop", "SELECT 1; DROP TABLE users", RiskNone}, // documented limitation: only first statement's verb is checked
@@ -55,6 +65,35 @@ func TestClassify(t *testing.T) {
 			got := Classify(c.sql)
 			if got.Risk != c.want {
 				t.Errorf("Classify(%q) = %q, want %q (reason: %q)", c.sql, got.Risk, c.want, got.Reason)
+			}
+		})
+	}
+}
+
+func TestIsRead(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{"select", "SELECT * FROM users", true},
+		{"show", "SHOW TABLES", true},
+		{"pragma", "PRAGMA table_info(users)", true},
+		{"explain", "EXPLAIN SELECT 1", true},
+		{"cte pure read", "WITH x AS (SELECT 1) SELECT * FROM x", true},
+
+		{"insert", "INSERT INTO users (email) VALUES ('a@b.com')", false},
+		{"create", "CREATE TABLE t (id INT)", false},
+		{"delete", "DELETE FROM users WHERE id = 1", false},
+		{"drop", "DROP TABLE users", false},
+		{"cte with delete", "WITH x AS (SELECT 1) DELETE FROM users", false},
+
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := IsRead(c.sql); got != c.want {
+				t.Errorf("IsRead(%q) = %v, want %v", c.sql, got, c.want)
 			}
 		})
 	}

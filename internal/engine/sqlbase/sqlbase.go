@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 const QueryRowCap = 500
@@ -70,6 +70,77 @@ func RunQuery(ctx context.Context, db *sql.DB, sqlText string) (engine.SQLResult
 	}
 	result.Total = int64(len(result.Rows))
 	return result, nil
+}
+
+// StreamRows runs sqlText (expected to be an unfiltered "SELECT * FROM
+// table" read of one table) against an already-open transaction and calls
+// onRow once per row, with no row cap and no in-memory buffering of the
+// full result set — the low-level read path SQL snapshots use to scan a
+// table's complete contents, as opposed to RunQuery's capped, display-
+// oriented Cell envelope used for interactive browsing.
+func StreamRows(ctx context.Context, tx *sql.Tx, sqlText string, onRow func(row map[string]any) error) error {
+	rows, err := tx.QueryContext(ctx, sqlText)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	colTypes, _ := rows.ColumnTypes()
+
+	scanBuf := make([]any, len(cols))
+	scanDest := make([]any, len(cols))
+	for i := range scanBuf {
+		scanDest[i] = &scanBuf[i]
+	}
+
+	for rows.Next() {
+		if err := rows.Scan(scanDest...); err != nil {
+			return err
+		}
+		row := make(map[string]any, len(cols))
+		for i, col := range cols {
+			var dbType string
+			if colTypes != nil && i < len(colTypes) {
+				dbType = colTypes[i].DatabaseTypeName()
+			}
+			row[col] = normalizeStreamedValue(scanBuf[i], dbType)
+		}
+		if err := onRow(row); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// normalizeStreamedValue coerces a driver-scanned value for type-faithful
+// JSON round-tripping: binary-typed columns keep their raw []byte (so
+// json.Marshal base64-encodes them, and a snapshot restore knows — from
+// the column's declared type — to decode them back). Every other column
+// that happened to scan as []byte (many database/sql drivers return raw
+// bytes for text columns, not string) is converted to string so it
+// round-trips as ordinary JSON text instead of being spuriously treated
+// as binary.
+func normalizeStreamedValue(v any, dbType string) any {
+	b, ok := v.([]byte)
+	if !ok {
+		return v
+	}
+	if isBinaryDBType(dbType) {
+		return b
+	}
+	return string(b)
+}
+
+func isBinaryDBType(dbType string) bool {
+	switch dbType {
+	case "BYTEA", "BLOB", "BINARY", "VARBINARY":
+		return true
+	}
+	return false
 }
 
 // FormatExplainRows runs an EXPLAIN-family query and renders every row as
@@ -145,6 +216,9 @@ func cellFromRaw(raw sql.RawBytes, dbType string) engine.Cell {
 	if raw == nil {
 		return engine.Cell{Type: engine.CellNull, Display: "null"}
 	}
+	if isBinaryDBType(dbType) {
+		return engine.Cell{Type: engine.CellBinary, Display: fmt.Sprintf("<%d bytes>", len(raw))}
+	}
 	s := string(raw)
 	switch dbType {
 	case "JSON", "JSONB":
@@ -159,8 +233,6 @@ func cellFromRaw(raw sql.RawBytes, dbType string) engine.Cell {
 		case "0", "f", "false", "FALSE":
 			return engine.Cell{Type: engine.CellBool, Display: "false", Raw: false}
 		}
-	case "BYTEA", "BLOB", "BINARY", "VARBINARY":
-		return engine.Cell{Type: engine.CellBinary, Display: fmt.Sprintf("<%d bytes>", len(raw))}
 	case "TIMESTAMP", "TIMESTAMPTZ", "DATE", "DATETIME", "TIME":
 		if t, err := parseAnyTime(s); err == nil {
 			return engine.Cell{Type: engine.CellDate, Display: t.Format(time.RFC3339), Raw: s}

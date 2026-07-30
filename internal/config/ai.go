@@ -1,6 +1,6 @@
 package config
 
-import "github.com/IshanKulkarni02/mongo-backup-tool/internal/secrets"
+import "github.com/IshanKulkarni02/dbhelm/internal/secrets"
 
 const aiAPIKeySecretKey = "ai:api-key"
 

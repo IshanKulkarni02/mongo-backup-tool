@@ -1,38 +1,43 @@
-// Package cmd implements mongobak's CLI commands.
+// Package cmd implements DBHelm's CLI commands.
 package cmd
 
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/tui"
+	"github.com/IshanKulkarni02/dbhelm/internal/tui"
 )
 
 var version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:   "mongobak",
+	Use:   "dbhelm",
 	Short: "Back up, restore, and version-control MongoDB databases, local or Atlas",
-	Long: `mongobak is a cross-platform tool for backing up, restoring, and
+	Long: `dbhelm is a cross-platform tool for backing up, restoring, and
 version-controlling MongoDB databases — local deployments or Atlas clusters.
+(For Postgres/MySQL/SQLite and the full SQL editor, AI assistant, and
+dashboards, see the DBHelm desktop app — run "dbhelm launcher" to open it.)
 
 Typical workflow:
-  mongobak connection add mydb --uri "mongodb://localhost:27017"
-  mongobak snapshot create --connection mydb --db myapp -m "checkpoint"
-  mongobak backup --connection mydb --db myapp
-  mongobak list
+  dbhelm connection add mydb --uri "mongodb://localhost:27017"
+  dbhelm snapshot create --connection mydb --db myapp -m "checkpoint"
+  dbhelm backup --connection mydb --db myapp
+  dbhelm list
 
-Run "mongobak guide" for a full in-terminal usage walkthrough, or just run
-"mongobak" with no arguments for an interactive, arrow-key driven UI.`,
+Run "dbhelm guide" for a full in-terminal usage walkthrough, or just run
+"dbhelm" with no arguments for an interactive, arrow-key driven UI.`,
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return cmd.Help()
+		}
 		return tui.Run()
 	},
 }
@@ -50,16 +55,4 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
-}
-
-// redactURI masks a URI's password for safe display in list/log output.
-func redactURI(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		return raw
-	}
-	if _, hasPass := u.User.Password(); hasPass {
-		u.User = url.UserPassword(u.User.Username(), "****")
-	}
-	return u.String()
 }

@@ -5,11 +5,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case screenLauncherChoice:
+		return m.handleLauncherChoiceKey(msg)
 	case screenDeps:
 		return m.handleDepsKey(msg)
 	case screenConnections:
@@ -30,6 +33,42 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleResultKey(msg)
 	}
 	return m, nil
+}
+
+// --- launcher choice ---
+
+func (m Model) handleLauncherChoiceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.launcherCursor > 0 {
+			m.launcherCursor--
+		}
+	case "down", "j":
+		if m.launcherCursor < 1 {
+			m.launcherCursor++
+		}
+	case "enter":
+		return m.chooseLauncher()
+	case "esc":
+		// Quick-dismiss defaults to the lightweight option rather than
+		// asking again next run.
+		m.launcherCursor = 0
+		return m.chooseLauncher()
+	}
+	return m, nil
+}
+
+func (m Model) chooseLauncher() (tea.Model, tea.Cmd) {
+	if m.launcherCursor == 0 {
+		m.screen = screenDeps
+		return m, chooseTerminalCmd
+	}
+	// Read by desktopAppResolvedMsg's handler once chooseDesktopAppCmd
+	// resolves, so the outcome screen knows where "continue" goes back to.
+	m.resultBack = screenDeps
+	m.screen = screenProgress
+	m.progressText = "Opening the desktop app..."
+	return m, chooseDesktopAppCmd
 }
 
 // --- deps ---
@@ -94,8 +133,10 @@ func (m Model) handleConnectionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addErr = ""
 		m.nameInput.SetValue("")
 		m.uriInput.SetValue("")
+		m.engineInput.SetValue("")
 		m.nameInput.Focus()
 		m.uriInput.Blur()
+		m.engineInput.Blur()
 	case "enter":
 		if len(m.connections) == 0 {
 			return m, nil
@@ -122,11 +163,11 @@ func (m Model) handleAddConnectionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = screenConnections
 		return m, nil
 	case tea.KeyTab, tea.KeyDown:
-		m.addFocus = (m.addFocus + 1) % 2
+		m.addFocus = (m.addFocus + 1) % 3
 		m.syncAddFocus()
 		return m, nil
 	case tea.KeyShiftTab, tea.KeyUp:
-		m.addFocus = (m.addFocus + 1) % 2
+		m.addFocus = (m.addFocus + 2) % 3
 		m.syncAddFocus()
 		return m, nil
 	case tea.KeyEnter:
@@ -136,26 +177,40 @@ func (m Model) handleAddConnectionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addErr = "both a name and a URI are required"
 			return m, nil
 		}
+		engineID := m.engineInput.Value()
+		if engineID != "" {
+			if _, err := engine.Lookup(engineID); err != nil {
+				m.addErr = err.Error()
+				return m, nil
+			}
+		}
 		m.addErr = ""
-		return m, saveConnectionCmd(name, uri)
+		return m, saveConnectionCmd(name, uri, engineID)
 	}
 
 	var cmd tea.Cmd
-	if m.addFocus == 0 {
+	switch m.addFocus {
+	case 0:
 		m.nameInput, cmd = m.nameInput.Update(msg)
-	} else {
+	case 1:
 		m.uriInput, cmd = m.uriInput.Update(msg)
+	default:
+		m.engineInput, cmd = m.engineInput.Update(msg)
 	}
 	return m, cmd
 }
 
 func (m *Model) syncAddFocus() {
-	if m.addFocus == 0 {
+	m.nameInput.Blur()
+	m.uriInput.Blur()
+	m.engineInput.Blur()
+	switch m.addFocus {
+	case 0:
 		m.nameInput.Focus()
-		m.uriInput.Blur()
-	} else {
-		m.nameInput.Blur()
+	case 1:
 		m.uriInput.Focus()
+	default:
+		m.engineInput.Focus()
 	}
 }
 
@@ -223,6 +278,7 @@ func buildMenuItems() []menuItem {
 		{"Backup: create", actionBackupCreate},
 		{"Backup: list", actionBackupList},
 		{"Backup: restore", actionBackupRestore},
+		{"Open desktop app (SQL, AI, dashboards, and more)", actionOpenDesktopApp},
 	}
 }
 
@@ -297,6 +353,12 @@ func (m Model) runMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		m.backups = nil
 		m.listCursor = 0
 		return m, loadBackupsCmd
+
+	case actionOpenDesktopApp:
+		m.resultBack = screenMenu
+		m.screen = screenProgress
+		m.progressText = "Opening the desktop app..."
+		return m, chooseDesktopAppCmd
 	}
 	return m, nil
 }
@@ -309,7 +371,7 @@ func (m Model) handleMessageInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		message := m.messageInput.Value()
 		m.screen = screenProgress
 		m.progressText = "Taking snapshot..."
-		return m, createSnapshotCmd(m.connection.Name, m.connection.URI, m.database, message)
+		return m, createSnapshotCmd(m.connection, m.database, message)
 	case tea.KeyEsc:
 		m.screen = screenMenu
 		return m, nil
@@ -362,12 +424,12 @@ func (m Model) selectListItem() (tea.Model, tea.Cmd) {
 		id := m.snapshots[m.listCursor].ID
 		m.screen = screenProgress
 		m.progressText = "Diffing against live database..."
-		return m, diffLiveCmd(m.connection.Name, m.connection.URI, m.database, id)
+		return m, diffLiveCmd(m.connection, m.database, id)
 
 	case listPurposeSnapshotRestore:
 		id := m.snapshots[m.listCursor].ID
 		m.confirmPrompt = fmt.Sprintf("Restore snapshot %s into %s/%s in place?\nA safety snapshot of the current state is taken automatically first.", shortID(id), m.connection.Name, m.database)
-		m.confirmYesMsg = restoreSnapshotCmd(m.connection.Name, m.connection.URI, m.database, id)
+		m.confirmYesMsg = restoreSnapshotCmd(m.connection, m.database, id)
 		m.confirmNoScreen = screenList
 		m.screen = screenConfirm
 		return m, nil
@@ -410,6 +472,12 @@ func (m Model) handleResultKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter, tea.KeyEsc:
 		m.screen = m.resultBack
+		if m.resultBack == screenDeps {
+			// Reached from the desktop-app chooser (see
+			// chooseDesktopAppCmd) — the dep check never ran yet since
+			// Init() skips it for screenLauncherChoice.
+			return m, checkDepsCmd
+		}
 	}
 	return m, nil
 }

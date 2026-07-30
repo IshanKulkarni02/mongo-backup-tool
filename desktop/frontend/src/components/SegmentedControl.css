@@ -1,0 +1,44 @@
+.segmented-control {
+  display: flex;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.segmented-control-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-body);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+.segmented-control-btn:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.segmented-control-btn.active {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  box-shadow: var(--shadow-raised);
+}
+
+.segmented-control-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -10,14 +10,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/sqlbase"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/tunnel"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/sqlbase"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 )
 
 func init() {
@@ -31,7 +33,7 @@ type Engine struct{}
 func (Engine) ID() string { return "postgres" }
 
 func (Engine) Capabilities() engine.Caps {
-	return engine.Caps{SQL: true, ForeignKeys: true}
+	return engine.Caps{SQL: true, ForeignKeys: true, Snapshots: true}
 }
 
 func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, error) {
@@ -122,7 +124,7 @@ func (s *Session) ListDatabases(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
@@ -156,7 +158,7 @@ func (s *Session) ListNamespaces(ctx context.Context, database string) ([]engine
 		return nil, err
 	}
 	defer rows.Close()
-	var out []engine.NamespaceInfo
+	out := []engine.NamespaceInfo{}
 	for rows.Next() {
 		var info engine.NamespaceInfo
 		if err := rows.Scan(&info.Name, &info.DocCount, &info.StorageSize); err != nil {
@@ -174,24 +176,30 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 	out := engine.TableSchema{Name: table}
 
 	colRows, err := s.db.QueryContext(ctx, `
-		SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable = 'YES',
-		  EXISTS (
-		    SELECT 1 FROM information_schema.table_constraints tc
-		    JOIN information_schema.key_column_usage kcu
-		      ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
-		    WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = $1
-		      AND tc.table_name = $2 AND kcu.column_name = c.column_name
-		  )
+		SELECT c.column_name, c.data_type, c.udt_name, c.is_nullable = 'YES', pk.ordinal_position
 		FROM information_schema.columns c
+		LEFT JOIN (
+		  SELECT kcu.column_name, kcu.ordinal_position
+		  FROM information_schema.table_constraints tc
+		  JOIN information_schema.key_column_usage kcu
+		    ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+		  WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = $1 AND tc.table_name = $2
+		) pk ON pk.column_name = c.column_name
 		WHERE c.table_schema = $1 AND c.table_name = $2
 		ORDER BY c.ordinal_position`, schema, table)
 	if err != nil {
 		return engine.TableSchema{}, err
 	}
+	type pkCol struct {
+		name    string
+		ordinal int64
+	}
+	var pkCols []pkCol
 	for colRows.Next() {
 		var c engine.Column
 		var udtName string
-		if err := colRows.Scan(&c.Name, &c.DataType, &udtName, &c.Nullable, &c.IsPK); err != nil {
+		var pkOrdinal sql.NullInt64
+		if err := colRows.Scan(&c.Name, &c.DataType, &udtName, &c.Nullable, &pkOrdinal); err != nil {
 			colRows.Close()
 			return engine.TableSchema{}, err
 		}
@@ -202,6 +210,10 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 		if c.DataType == "USER-DEFINED" {
 			c.DataType = udtName
 		}
+		if pkOrdinal.Valid {
+			c.IsPK = true
+			pkCols = append(pkCols, pkCol{name: c.Name, ordinal: pkOrdinal.Int64})
+		}
 		out.Columns = append(out.Columns, c)
 	}
 	if err := colRows.Err(); err != nil {
@@ -209,6 +221,10 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 		return engine.TableSchema{}, err
 	}
 	colRows.Close()
+	sort.Slice(pkCols, func(i, j int) bool { return pkCols[i].ordinal < pkCols[j].ordinal })
+	for _, pc := range pkCols {
+		out.PrimaryKey = append(out.PrimaryKey, pc.name)
+	}
 
 	fkRows, err := s.db.QueryContext(ctx, `
 		SELECT kcu.column_name, ccu.table_name, ccu.column_name
@@ -249,4 +265,72 @@ func (s *Session) Explain(ctx context.Context, database, sqlText string) (string
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	return sqlbase.FormatExplainRows(ctx, s.db, "EXPLAIN "+sqlText)
+}
+
+// ListTableIndexes returns the table's indexes as literal CREATE INDEX DDL
+// (pg_get_indexdef), excluding indexes that merely back a PRIMARY
+// KEY/UNIQUE constraint — snapshot restore assumes the target table
+// (and therefore its own declared constraints) already exists, so
+// replaying those would just fail with "already exists".
+func (s *Session) ListTableIndexes(ctx context.Context, database, table string) ([]engine.IndexDef, error) {
+	ctx, cancel := opCtx(ctx)
+	defer cancel()
+	schema := schemaOrPublic(database)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.relname, pg_get_indexdef(ix.indexrelid)
+		FROM pg_index ix
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_class t ON t.oid = ix.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = $1 AND t.relname = $2
+		  AND NOT EXISTS (
+		    SELECT 1 FROM pg_constraint c
+		    WHERE c.conindid = ix.indexrelid AND c.contype IN ('p', 'u')
+		  )
+		ORDER BY i.relname`, schema, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []engine.IndexDef{}
+	for rows.Next() {
+		var d engine.IndexDef
+		if err := rows.Scan(&d.Name, &d.DDL); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// BeginConsistentRead opens a REPEATABLE READ, read-only transaction —
+// Postgres' MVCC gives this a consistent snapshot as of the transaction's
+// start, so every table streamed through it sees one point-in-time view
+// of the database.
+func (s *Session) BeginConsistentRead(ctx context.Context) (engine.ConsistentReadTx, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	return &readTx{tx: tx}, nil
+}
+
+type readTx struct {
+	tx *sql.Tx
+}
+
+func (r *readTx) StreamRows(ctx context.Context, database, table string, onRow func(row map[string]any) error) error {
+	sqlText := fmt.Sprintf("SELECT * FROM %s.%s", quoteIdent(schemaOrPublic(database)), quoteIdent(table))
+	return sqlbase.StreamRows(ctx, r.tx, sqlText, onRow)
+}
+
+// Close rolls back rather than commits — this is a read-only transaction,
+// there's nothing to persist, and rollback is the correct way to release a
+// REPEATABLE READ snapshot's held resources.
+func (r *readTx) Close(ctx context.Context) error {
+	return r.tx.Rollback()
+}
+
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

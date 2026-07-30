@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
 )
 
 var doctorCmd = &cobra.Command{
@@ -24,9 +24,9 @@ var doctorCmd = &cobra.Command{
 		fmt.Println()
 		for _, s := range depmanager.CheckOptional() {
 			if s.Installed {
-				fmt.Printf("OK %s (optional, for `mongobak remote`): %s\n", s.Dependency.Name, s.Version)
+				fmt.Printf("OK %s (optional, for `dbhelm remote`): %s\n", s.Dependency.Name, s.Version)
 			} else {
-				fmt.Printf("-  %s (optional, for `mongobak remote`): not found\n", s.Dependency.Name)
+				fmt.Printf("-  %s (optional, for `dbhelm remote`): not found\n", s.Dependency.Name)
 			}
 		}
 
@@ -40,7 +40,7 @@ var doctorCmd = &cobra.Command{
 			fmt.Println(" ", line)
 		}
 		if depmanager.AutoInstallAvailable() {
-			fmt.Println("\nOr let mongobak install them for you: mongobak doctor install")
+			fmt.Println("\nOr let dbhelm install them for you: dbhelm doctor install")
 		}
 		return fmt.Errorf("missing required tools")
 	},
@@ -104,7 +104,7 @@ var doctorInstallCmd = &cobra.Command{
 			fmt.Println("All required tools are now available.")
 			return nil
 		}
-		return fmt.Errorf("install completed but some tools are still missing — run `mongobak doctor` for details")
+		return fmt.Errorf("install completed but some tools are still missing — run `dbhelm doctor` for details")
 	},
 }
 
@@ -116,7 +116,7 @@ func installGitLFS() error {
 		}
 	}
 	if !doctorInstallYes {
-		fmt.Println("This will run your OS's package manager to install git-lfs (needed for `mongobak remote`).")
+		fmt.Println("This will run your OS's package manager to install git-lfs (needed for `dbhelm remote`).")
 		fmt.Print("Proceed? [y/N] ")
 		var answer string
 		fmt.Scanln(&answer)

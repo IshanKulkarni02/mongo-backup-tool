@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/depmanager"
+	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
 )
 
 func (m Model) View() string {
@@ -14,6 +14,8 @@ func (m Model) View() string {
 
 	var b strings.Builder
 	switch m.screen {
+	case screenLauncherChoice:
+		b.WriteString(m.viewLauncherChoice())
 	case screenDeps:
 		b.WriteString(m.viewDeps())
 	case screenConnections:
@@ -46,9 +48,23 @@ func footer(help string) string {
 	return "\n" + helpStyle.Render(help) + "\n"
 }
 
+func (m Model) viewLauncherChoice() string {
+	var b strings.Builder
+	b.WriteString(header("dbhelm"))
+	choices := []string{
+		"Continue in terminal — connections, backups, snapshots",
+		"Get the full app — SQL editor, AI assistant, dashboards, and more",
+	}
+	for i, c := range choices {
+		b.WriteString(cursorPrefix(i == m.launcherCursor) + c + "\n")
+	}
+	b.WriteString(footer("↑/↓ select · enter choose · (you can switch later with: dbhelm launcher)"))
+	return b.String()
+}
+
 func (m Model) viewDeps() string {
 	var b strings.Builder
-	b.WriteString(header("mongobak — checking dependencies"))
+	b.WriteString(header("dbhelm — checking dependencies"))
 	for _, s := range m.depStatuses {
 		if s.Installed {
 			b.WriteString(okStyle.Render("  ✓ "+s.Dependency.Name) + " " + mutedStyle.Render(s.Version) + "\n")
@@ -106,7 +122,9 @@ func (m Model) viewAddConnection() string {
 	var b strings.Builder
 	b.WriteString(header("Add connection"))
 	b.WriteString(labelStyle.Render("Name") + "\n" + m.nameInput.View() + "\n\n")
-	b.WriteString(labelStyle.Render("URI") + "\n" + m.uriInput.View() + "\n")
+	b.WriteString(labelStyle.Render("URI") + "\n" + m.uriInput.View() + "\n\n")
+	b.WriteString(labelStyle.Render("Engine") + "\n" + m.engineInput.View() + "\n")
+	b.WriteString(mutedStyle.Render("For SSH tunnels, multi-tenant, or read-only connections, use: dbhelm connection add --help") + "\n")
 	if m.addErr != "" {
 		b.WriteString("\n" + errorStyle.Render(m.addErr) + "\n")
 	}

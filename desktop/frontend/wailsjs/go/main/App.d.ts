@@ -3,12 +3,13 @@
 import {main} from '../models';
 import {depmanager} from '../models';
 import {safeguard} from '../models';
-import {snapshot} from '../models';
+import {schemadiff} from '../models';
 import {engine} from '../models';
+import {snapshot} from '../models';
 import {store} from '../models';
 import {ai} from '../models';
+import {queryhistory} from '../models';
 import {dashboard} from '../models';
-import {schemadiff} from '../models';
 import {migrations} from '../models';
 
 export function AddConnection(arg1:main.ConnectionInput):Promise<void>;
@@ -23,6 +24,10 @@ export function CheckOllama():Promise<depmanager.OllamaStatus>;
 
 export function ClassifySQL(arg1:string):Promise<safeguard.Classification>;
 
+export function ClearQueryHistory():Promise<void>;
+
+export function CloneRemote(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function CompareVectors(arg1:string,arg2:string):Promise<main.VectorComparison>;
 
 export function CreateBackup(arg1:string,arg2:string):Promise<string>;
@@ -35,11 +40,11 @@ export function CreateSnapshot(arg1:string,arg2:string,arg3:string):Promise<stri
 
 export function DeleteBackup(arg1:string):Promise<void>;
 
+export function DeleteDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function DeleteSavedQuery(arg1:string):Promise<void>;
 
 export function DeleteWidget(arg1:string):Promise<void>;
-
-export function DeleteDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function DiffCollectionChanges(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:string,arg7:number,arg8:number):Promise<main.DiffChangePage>;
 
@@ -57,6 +62,10 @@ export function ExplainSQL(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function ExplainWithAI(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function ExportQueryResultsCSV(arg1:engine.SQLResult,arg2:string):Promise<string>;
+
+export function ExportQueryResultsJSON(arg1:engine.SQLResult,arg2:string):Promise<string>;
+
 export function FixSQLError(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Array<string>):Promise<string>;
 
 export function GCSnapshots(arg1:string,arg2:string,arg3:number):Promise<snapshot.GCResult>;
@@ -65,15 +74,19 @@ export function GenerateAPISchema(arg1:string,arg2:string,arg3:string,arg4:strin
 
 export function GenerateAggregation(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function GenerateSchemaMigration(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<schemadiff.Migration>;
-
 export function GenerateMockData(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<string>;
 
 export function GenerateSQL(arg1:string,arg2:string,arg3:string,arg4:Array<string>,arg5:string):Promise<string>;
 
+export function GenerateSchemaMigration(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<schemadiff.Migration>;
+
 export function GetAISettings():Promise<main.AISettingsInfo>;
 
 export function GetTableSchema(arg1:string,arg2:string,arg3:string):Promise<engine.TableSchema>;
+
+export function ImportCSV(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean,arg7:Record<string, string>):Promise<number>;
+
+export function InitRemote(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function InsertDocument(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
@@ -82,6 +95,8 @@ export function InsertWebhookPayload(arg1:string,arg2:string,arg3:string,arg4:st
 export function InstallDependencies():Promise<string>;
 
 export function InstallOllama():Promise<string>;
+
+export function IsRemoteInitialized(arg1:string,arg2:string):Promise<boolean>;
 
 export function IsWebhookListenerRunning():Promise<boolean>;
 
@@ -95,17 +110,21 @@ export function ListIndexes(arg1:string,arg2:string,arg3:string):Promise<Array<m
 
 export function ListOllamaModels(arg1:string):Promise<Array<ai.OllamaModel>>;
 
+export function ListQueryHistory(arg1:string,arg2:number):Promise<Array<queryhistory.Entry>>;
+
 export function ListReferencingTables(arg1:string,arg2:string,arg3:string):Promise<Array<main.IncomingForeignKey>>;
 
 export function ListSavedQueries():Promise<Array<dashboard.SavedQuery>>;
-
-export function ListWidgets():Promise<Array<dashboard.Widget>>;
 
 export function ListSnapshots(arg1:string,arg2:string):Promise<Array<snapshot.Summary>>;
 
 export function ListTables(arg1:string,arg2:string):Promise<Array<main.TableInfo>>;
 
+export function ListWidgets():Promise<Array<dashboard.Widget>>;
+
 export function ManualInstallInstructions():Promise<Array<string>>;
+
+export function PickCSVFile():Promise<string>;
 
 export function PickMigrationsFolder():Promise<string>;
 
@@ -113,9 +132,17 @@ export function PickSQLiteFile():Promise<string>;
 
 export function PullOllamaModel(arg1:string,arg2:string):Promise<string>;
 
+export function PullRemote(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function PushRemote(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
 export function QueryDocuments(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number,arg7:number):Promise<main.QueryResult>;
 
+export function ReadCSVHeader(arg1:string):Promise<Array<string>>;
+
 export function RemoveConnection(arg1:string):Promise<void>;
+
+export function RerunFromHistory(arg1:string):Promise<engine.SQLResult>;
 
 export function RestoreBackup(arg1:string,arg2:string):Promise<string>;
 
@@ -123,7 +150,7 @@ export function RestoreSnapshot(arg1:string,arg2:string,arg3:string):Promise<str
 
 export function RunAggregation(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<string>>;
 
-export function RunSavedQuery(arg1:string):Promise<engine.SQLResult>;
+export function RunCrossDatabaseSearch(arg1:string):Promise<string>;
 
 export function RunSQLExecute(arg1:string,arg2:string,arg3:string,arg4:string):Promise<number>;
 
@@ -131,9 +158,9 @@ export function RunSQLQuery(arg1:string,arg2:string,arg3:string):Promise<engine.
 
 export function RunSQLQueryJob(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function SaveAISettings(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+export function RunSavedQuery(arg1:string):Promise<engine.SQLResult>;
 
-export function SecureCredentialStorageAvailable():Promise<boolean>;
+export function SaveAISettings(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SaveMigration(arg1:string,arg2:string,arg3:string,arg4:string):Promise<migrations.SaveResult>;
 
@@ -141,7 +168,9 @@ export function SaveQuery(arg1:string,arg2:string,arg3:string,arg4:string,arg5:s
 
 export function SaveWidget(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:Array<string>):Promise<string>;
 
-export function StartWebhookListener(arg1:number):Promise<string>;
+export function SecureCredentialStorageAvailable():Promise<boolean>;
+
+export function StartWebhookListener(arg1:number):Promise<main.WebhookListenerInfo>;
 
 export function StopWebhookListener():Promise<void>;
 

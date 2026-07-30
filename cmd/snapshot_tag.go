@@ -5,14 +5,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/snapshot"
+	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
 var snapshotTagCmd = &cobra.Command{
 	Use:     "tag <snapshot-id> <tag>",
 	Short:   "Label a snapshot (tagged snapshots are always protected from gc)",
 	Args:    cobra.ExactArgs(2),
-	Example: `  mongobak snapshot tag abc123 v1.0-before-migration --connection local --db myapp`,
+	Example: `  dbhelm snapshot tag abc123 v1.0-before-migration --connection local --db myapp`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireConnAndDB(); err != nil {
 			return err

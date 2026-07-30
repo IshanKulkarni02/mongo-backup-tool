@@ -8,7 +8,7 @@ package engine
 import (
 	"context"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/engine/tunnel"
+	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 )
 
 // Caps describes what a database engine supports, so UI surfaces can be
@@ -23,7 +23,7 @@ type Caps struct {
 	Aggregation bool `json:"aggregation"`
 	// ForeignKeys: declared FK constraints exist for relational navigation.
 	ForeignKeys bool `json:"foreignKeys"`
-	// Snapshots: mongobak's snapshot/backup engines can operate on it.
+	// Snapshots: dbhelm's snapshot/backup engines can operate on it.
 	Snapshots bool `json:"snapshots"`
 }
 
@@ -111,4 +111,27 @@ type SQLSession interface {
 	Execute(ctx context.Context, database, sqlText string) (int64, error)
 	// Explain returns the database's own query-plan text for sqlText.
 	Explain(ctx context.Context, database, sqlText string) (string, error)
+	// ListTableIndexes returns one table's indexes as literal, replayable
+	// DDL text — used by SQL snapshots to recreate indexes on restore.
+	ListTableIndexes(ctx context.Context, database, table string) ([]IndexDef, error)
+	// BeginConsistentRead opens a read-only, snapshot-isolated transaction
+	// for scanning a table's full contents without the row cap Query
+	// enforces for interactive browsing — used by SQL snapshots' scan
+	// step, where every row (not just the first page) must be read under
+	// one consistent view of the data.
+	BeginConsistentRead(ctx context.Context) (ConsistentReadTx, error)
+}
+
+// ConsistentReadTx is a snapshot-isolated read transaction opened by
+// SQLSession.BeginConsistentRead.
+type ConsistentReadTx interface {
+	// StreamRows runs sqlText (expected to be an unfiltered "SELECT * FROM
+	// table" read of one table) and calls onRow once per row in the
+	// result, with no row cap and no in-memory buffering of the full
+	// result set — unlike SQLSession.Query, which is capped and buffered
+	// for interactive display. Row values are the driver's native Go
+	// types (real []byte for binary columns), not the display-oriented
+	// Cell envelope Query produces.
+	StreamRows(ctx context.Context, database, table string, onRow func(row map[string]any) error) error
+	Close(ctx context.Context) error
 }

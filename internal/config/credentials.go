@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/secrets"
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 )
 
 // credentialKey is the secrets-store key holding a connection's password.

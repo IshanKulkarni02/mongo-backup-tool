@@ -13,10 +13,10 @@ import (
 )
 
 // Find locates a Database Tools binary (e.g. "mongodump") by, in order:
-// an override env var (MONGOBAK_MONGODUMP_PATH), the system PATH, then a
+// an override env var (DBHELM_MONGODUMP_PATH), the system PATH, then a
 // set of common install locations per OS.
 func Find(base string) (string, error) {
-	envVar := "MONGOBAK_" + strings.ToUpper(base) + "_PATH"
+	envVar := "DBHELM_" + strings.ToUpper(base) + "_PATH"
 	if p := os.Getenv(envVar); p != "" {
 		if fileExists(p) {
 			return p, nil
@@ -43,7 +43,7 @@ func Find(base string) (string, error) {
 	return "", fmt.Errorf(
 		"%s not found on PATH or in common install locations.\n"+
 			"Install the MongoDB Database Tools, or point to it directly with %s=/path/to/%s.\n"+
-			"Run `mongobak doctor` for OS-specific install instructions.",
+			"Run `dbhelm doctor` for OS-specific install instructions.",
 		base, envVar, name,
 	)
 }

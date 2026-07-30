@@ -158,6 +158,9 @@ func ListModels(ctx context.Context, host string) ([]OllamaModel, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
+	if out.Models == nil {
+		return []OllamaModel{}, nil
+	}
 	return out.Models, nil
 }
 

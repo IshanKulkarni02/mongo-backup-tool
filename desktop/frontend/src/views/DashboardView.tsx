@@ -34,9 +34,11 @@ import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../components/Toast";
+import { Select } from "../components/Select";
+import { SegmentedControl } from "../components/SegmentedControl";
 import "./DashboardView.css";
 
-const CHART_COLORS = ["#0066ff", "#1f8a4c", "#d33a2c", "#9a6b00", "#6b46c1", "#0e7490"];
+const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)", "var(--chart-6)"];
 
 type ChartType = "bar" | "line" | "scatter" | "pie";
 
@@ -343,34 +345,34 @@ function NewWidgetModal({
       <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
       <div className="field">
         <label className="field-label">Saved query</label>
-        <select className="input" value={queryId} onChange={(e) => setQueryId(e.target.value)}>
-          {queries.map((q) => (
-            <option key={q.id} value={q.id}>
-              {q.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={queryId}
+          onChange={setQueryId}
+          options={queries.map((q) => ({ value: q.id, label: q.name }))}
+        />
       </div>
       <div className="field">
         <label className="field-label">Chart type</label>
-        <select className="input" value={chartType} onChange={(e) => setChartType(e.target.value as ChartType)}>
-          <option value="bar">Bar</option>
-          <option value="line">Line</option>
-          <option value="scatter">Scatter</option>
-          <option value="pie">Pie</option>
-        </select>
+        <SegmentedControl
+          value={chartType}
+          onChange={(v) => setChartType(v as ChartType)}
+          options={[
+            { value: "bar", label: "Bar" },
+            { value: "line", label: "Line" },
+            { value: "scatter", label: "Scatter" },
+            { value: "pie", label: "Pie" },
+          ]}
+        />
       </div>
       {columns.length > 0 && (
         <>
           <div className="field">
             <label className="field-label">X column</label>
-            <select className="input" value={xColumn} onChange={(e) => setXColumn(e.target.value)}>
-              {columns.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={xColumn}
+              onChange={setXColumn}
+              options={columns.map((c) => ({ value: c, label: c }))}
+            />
           </div>
           <div className="field">
             <label className="field-label">Y column(s)</label>

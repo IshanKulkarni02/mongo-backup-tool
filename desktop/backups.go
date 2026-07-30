@@ -8,9 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/config"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/mongotools"
-	"github.com/IshanKulkarni02/mongo-backup-tool/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
 // ListBackups returns every local backup archive.
@@ -73,7 +74,11 @@ func (a *App) DeleteBackup(id string) error {
 	if !ok {
 		return fmt.Errorf("no backup with id %q", id)
 	}
-	if err := os.Remove(filepath.Join(dir, bk.FileName)); err != nil && !os.IsNotExist(err) {
+	archivePath, err := pathsafety.SafeJoin(dir, bk.FileName)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	idx.Remove(id)
@@ -96,7 +101,7 @@ func runBackup(connName, uri, dbName string) (string, error) {
 		label = "all"
 	}
 	id := uuid.NewString()
-	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", connName, label, time.Now().Format("20060102-150405"))
+	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", pathsafety.SanitizeComponent(connName), pathsafety.SanitizeComponent(label), time.Now().Format("20060102-150405"))
 	archivePath := filepath.Join(backupsDir, fileName)
 
 	if _, err := mongotools.Dump(mongotools.DumpOptions{
@@ -144,9 +149,14 @@ func runBackupRestore(connName, uri, backupID string) error {
 		return fmt.Errorf("no backup with id %q", backupID)
 	}
 
+	archivePath, err := pathsafety.SafeJoin(backupsDir, bk.FileName)
+	if err != nil {
+		return err
+	}
+
 	_, err = mongotools.Restore(mongotools.RestoreOptions{
 		URI:         uri,
-		ArchivePath: filepath.Join(backupsDir, bk.FileName),
+		ArchivePath: archivePath,
 		SourceDB:    bk.Database,
 		Drop:        true,
 	})

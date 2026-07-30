@@ -61,6 +61,22 @@ type TableSchema struct {
 	Name        string       `json:"name"`
 	Columns     []Column     `json:"columns"`
 	ForeignKeys []ForeignKey `json:"foreignKeys"`
+	// PrimaryKey is the table's primary-key column names, in declared
+	// ordinal order (so a composite key's identity is reproducible), or
+	// empty if the table has no primary key. Columns[].IsPK is a flat
+	// per-column bool with no ordering — this is the source of truth for
+	// anything that needs the key as an ordered tuple (snapshot row
+	// identity, in particular).
+	PrimaryKey []string `json:"primaryKey,omitempty"`
+}
+
+// IndexDef is one SQL index, captured as its literal, replayable DDL text
+// rather than a structured representation — every dialect can produce (or,
+// for MySQL, reconstruct) a CREATE INDEX statement, so there's no need for
+// a second index-option schema alongside Mongo's IndexSpec.
+type IndexDef struct {
+	Name string `json:"name"`
+	DDL  string `json:"ddl"`
 }
 
 // CellType tags how a SQL result value should be rendered — a database's
