@@ -37,7 +37,19 @@ var (
 	leadingCommentRe = regexp.MustCompile(`(?s)^(\s*(--[^\n]*\n|/\*.*?\*/))*\s*`)
 	whereRe          = regexp.MustCompile(`(?i)\bwhere\b`)
 	firstWordRe      = regexp.MustCompile(`(?i)^([a-zA-Z]+)`)
+	// Matches a single-quoted SQL string literal, including an escaped ''
+	// quote inside it, so a keyword-shaped word appearing only inside
+	// quoted data (e.g. WHERE name = 'INSERT') isn't mistaken for a real
+	// SQL keyword when scanning for a statement's verb.
+	stringLiteralRe = regexp.MustCompile(`'([^']|'')*'`)
 )
+
+// stripStringLiterals blanks the contents of every single-quoted string
+// literal in s, so a subsequent keyword-scanning regex can't be fooled by
+// verb-shaped text that only appears inside quoted data.
+func stripStringLiterals(s string) string {
+	return stringLiteralRe.ReplaceAllString(s, "''")
+}
 
 // Classify inspects a single SQL statement (no trailing semicolon assumed)
 // and returns its risk level. It works on statement text alone — it does
@@ -64,12 +76,12 @@ func Classify(sqlText string) Classification {
 	case "ALTER":
 		return Classification{Risk: RiskDangerous, Reason: "ALTER changes schema and may be irreversible"}
 	case "DELETE":
-		if !whereRe.MatchString(stripped) {
+		if !whereRe.MatchString(stripStringLiterals(stripped)) {
 			return Classification{Risk: RiskDangerous, Reason: "DELETE with no WHERE clause removes every row"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: "DELETE removes rows"}
 	case "UPDATE":
-		if !whereRe.MatchString(stripped) {
+		if !whereRe.MatchString(stripStringLiterals(stripped)) {
 			return Classification{Risk: RiskDangerous, Reason: "UPDATE with no WHERE clause modifies every row"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: "UPDATE modifies rows"}
@@ -117,7 +129,8 @@ func IsRead(sqlText string) bool {
 var finalVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER)\b`)
 
 func classifyWithCTE(upper string) Classification {
-	matches := finalVerbRe.FindAllString(upper, -1)
+	noLiterals := stripStringLiterals(upper)
+	matches := finalVerbRe.FindAllString(noLiterals, -1)
 	if len(matches) == 0 {
 		return Classification{Risk: RiskNone}
 	}
@@ -126,7 +139,7 @@ func classifyWithCTE(upper string) Classification {
 	case "DROP", "TRUNCATE", "ALTER":
 		return Classification{Risk: RiskDangerous, Reason: last + " inside a WITH statement"}
 	case "DELETE", "UPDATE":
-		if !whereRe.MatchString(upper) {
+		if !whereRe.MatchString(noLiterals) {
 			return Classification{Risk: RiskDangerous, Reason: last + " with no WHERE clause inside a WITH statement"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: last + " inside a WITH statement"}

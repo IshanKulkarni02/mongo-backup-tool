@@ -21,10 +21,15 @@ func TestClassify(t *testing.T) {
 		{"truncate", "TRUNCATE TABLE users", RiskDangerous},
 		{"alter table", "ALTER TABLE users DROP COLUMN email", RiskDangerous},
 
-		// A literal "where" inside a string/comment must not be mistaken
-		// for a real WHERE clause... but note our regex-based classifier
-		// can't tell the difference — this documents the known limitation
-		// rather than asserting an unsafe false negative is caught.
+		// A quoted "where" is data, not a real WHERE clause — an unbounded
+		// DELETE/UPDATE must still classify as dangerous even if a string
+		// literal happens to contain the word.
+		{"delete no where, word in literal", "DELETE FROM logs RETURNING 'no where clause here'", RiskDangerous},
+		{"update no where, word in literal", "UPDATE users SET note = 'the where clause'", RiskDangerous},
+
+		// "WHERE true" is a real (if vacuous) WHERE clause — the
+		// classifier can't judge truthiness, so this documents a known,
+		// separate limitation rather than the quoted-literal bypass above.
 		{"delete where true", "DELETE FROM users WHERE true", RiskConfirm},
 
 		// Leading comments must not hide the real verb.
@@ -44,6 +49,11 @@ func TestClassify(t *testing.T) {
 		{"cte then delete no where", "WITH x AS (SELECT 1) DELETE FROM users", RiskDangerous},
 		{"cte then delete with where", "WITH x AS (SELECT 1) DELETE FROM users WHERE id = 1", RiskConfirm},
 		{"cte then select", "WITH x AS (SELECT 1) SELECT * FROM x", RiskNone},
+
+		// CTEs: a quoted verb-shaped word after the real statement must not
+		// shift which verb — or WHERE-clause presence — gets evaluated.
+		{"cte then delete no where, verb word in literal", "WITH x AS (SELECT 1) DELETE FROM logs RETURNING 'insert a note'", RiskDangerous},
+		{"cte then update no where, where word in literal", "WITH x AS (SELECT 1) UPDATE users SET note = 'the where clause'", RiskDangerous},
 
 		// Multiple statements: DROP anywhere should still flag dangerous
 		// even if it's not the first keyword after a CTE-less statement.
