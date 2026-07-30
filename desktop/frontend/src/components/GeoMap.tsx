@@ -41,7 +41,17 @@ export function GeoMap({ geojson }: Props) {
   return (
     <div className="geo-map-wrap">
       <MapContainer
-        key={JSON.stringify(geojson).slice(0, 64)}
+        // react-leaflet's <GeoJSON> only reacts to `style` prop changes and
+        // never re-applies `data` on updates, so remounting via `key` is
+        // the only way to reflect new data. The full serialized string is
+        // used rather than a truncated prefix: two genuinely different
+        // GeoJSON payloads routinely share the same first several dozen
+        // characters (the boilerplate FeatureCollection/Feature/properties
+        // prefix alone exceeds that), which left the map showing stale
+        // data for a shape that actually changed. Truncating never saved
+        // any work anyway — JSON.stringify already does the full
+        // serialization before a .slice() would cut the result down.
+        key={JSON.stringify(geojson)}
         bounds={bounds}
         center={[0, 0]}
         zoom={2}
