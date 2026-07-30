@@ -377,7 +377,18 @@ function DocumentsPanel({
     try {
       await DeleteDocument(connection, database, collection, deleteTarget);
       toast.push("success", beginner ? "Record deleted" : "Document deleted");
-      runQuery();
+      // Deleting the last document(s) on a page can leave `skip` pointing
+      // past the new (smaller) total — clamp it back onto a valid page so
+      // the grid doesn't end up empty with a nonsensical "26-25 of 25"
+      // range. Clamping triggers the [skip]-keyed effect to refetch; if it
+      // doesn't change, refetch here instead.
+      const newTotal = Math.max(0, (result?.total ?? 1) - 1);
+      const clampedSkip = Math.max(0, Math.min(skip, newTotal - PAGE_SIZE));
+      if (clampedSkip !== skip) {
+        setSkip(clampedSkip);
+      } else {
+        runQuery();
+      }
       onMutated();
     } catch (e) {
       toast.push("error", String(e));
