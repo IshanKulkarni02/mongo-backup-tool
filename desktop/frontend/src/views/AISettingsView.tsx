@@ -171,14 +171,25 @@ function OllamaManager({ ollamaHost }: { ollamaHost: string }) {
 
   async function install() {
     setInstalling(true);
-    const id = await InstallOllama();
-    setInstallJobId(id);
+    try {
+      const id = await InstallOllama();
+      setInstallJobId(id);
+    } catch (e) {
+      // Without this, a rejection here left `installing` stuck true
+      // forever — "Installing..." shown permanently with no way out.
+      setInstalling(false);
+      toast.push("error", String(e));
+    }
   }
 
   async function pull() {
     if (!pullModel.trim()) return;
-    const id = await PullOllamaModel(ollamaHost, pullModel.trim());
-    setPullJobId(id);
+    try {
+      const id = await PullOllamaModel(ollamaHost, pullModel.trim());
+      setPullJobId(id);
+    } catch (e) {
+      toast.push("error", String(e));
+    }
   }
 
   function cancelPull() {

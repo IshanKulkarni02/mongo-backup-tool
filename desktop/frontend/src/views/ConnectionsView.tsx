@@ -36,7 +36,10 @@ export function ConnectionsView({
   const [secureStorage, setSecureStorage] = useState<boolean | null>(null);
   const toast = useToast();
 
-  const load = () => ListConnections().then(setConnections);
+  const load = () =>
+    ListConnections()
+      .then(setConnections)
+      .catch((e) => toast.push("error", String(e)));
 
   useEffect(() => {
     load();
