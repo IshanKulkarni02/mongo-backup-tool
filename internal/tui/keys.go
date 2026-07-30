@@ -185,6 +185,18 @@ func (m Model) handleAddConnectionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.addErr = ""
+		// Move off screenAddConnection immediately, before the save
+		// completes — matching handleMessageInputKey's pattern for every
+		// other async action in this TUI. Left at screenAddConnection, a
+		// key-repeat or a fast double Enter before connectionSavedMsg
+		// arrives would dispatch saveConnectionCmd twice concurrently,
+		// each running its own unsynchronized config.Load-mutate-Save
+		// against the same config.json — a lost-update race.
+		// connectionSavedMsg's handler routes back to screenAddConnection
+		// on error so the form (and addErr) are still there to fix and
+		// retry.
+		m.screen = screenProgress
+		m.progressText = "Saving connection..."
 		return m, saveConnectionCmd(name, uri, engineID)
 	}
 
