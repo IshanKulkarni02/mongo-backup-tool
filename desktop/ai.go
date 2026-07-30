@@ -45,20 +45,18 @@ func (a *App) GetAISettings() (AISettingsInfo, error) {
 // pass "" to leave any previously stored key untouched, or a new value to
 // replace it (stored in the system keychain, not in config.json).
 func (a *App) SaveAISettings(providerID, model, ollamaHost, apiKey string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	cfg.AI.ProviderID = providerID
-	cfg.AI.Model = model
-	cfg.AI.OllamaHost = ollamaHost
-	if apiKey != "" {
-		if err := config.SetAIAPIKey(apiKey); err != nil {
-			return fmt.Errorf("saving API key: %w", err)
+	return config.Update(func(cfg *config.Config) error {
+		cfg.AI.ProviderID = providerID
+		cfg.AI.Model = model
+		cfg.AI.OllamaHost = ollamaHost
+		if apiKey != "" {
+			if err := config.SetAIAPIKey(apiKey); err != nil {
+				return fmt.Errorf("saving API key: %w", err)
+			}
+			cfg.AI.HasAPIKey = true
 		}
-		cfg.AI.HasAPIKey = true
-	}
-	return config.Save(cfg)
+		return nil
+	})
 }
 
 func (a *App) providerFromSettings() (ai.Provider, error) {

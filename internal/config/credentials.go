@@ -151,34 +151,36 @@ func DeleteCredential(conn Connection) {
 // MigrateCredentials moves any plaintext passwords in the stored config
 // into the system keyring. It reports how many connections were migrated.
 // A no-op (0, nil) when no keyring is available or nothing needs moving.
+// Goes through Update so this (called from a startup goroutine) can't
+// lose an in-flight AddConnection/RemoveConnection/SwitchTenant call's
+// write, or have its own write lost to one of theirs.
 func MigrateCredentials() (int, error) {
 	if !secrets.Available() {
 		return 0, nil
 	}
-	cfg, err := Load()
-	if err != nil {
-		return 0, err
-	}
 	needs := 0
-	for _, c := range cfg.Connections {
-		if c.CredentialRef == "" {
-			if _, _, ok := splitPassword(c.URI); ok {
+	err := Update(func(cfg *Config) error {
+		for _, c := range cfg.Connections {
+			if c.CredentialRef == "" {
+				if _, _, ok := splitPassword(c.URI); ok {
+					needs++
+					continue
+				}
+			}
+			if c.SSHPasswordRef == "" && c.SSHPassword != "" {
 				needs++
 				continue
 			}
+			if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
+				needs++
+			}
 		}
-		if c.SSHPasswordRef == "" && c.SSHPassword != "" {
-			needs++
-			continue
+		if needs == 0 {
+			return errNoChange
 		}
-		if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
-			needs++
-		}
-	}
-	if needs == 0 {
-		return 0, nil
-	}
-	if err := Save(cfg); err != nil {
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
 	return needs, nil
