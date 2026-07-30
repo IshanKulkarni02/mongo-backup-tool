@@ -89,6 +89,40 @@ func TestIsRead(t *testing.T) {
 	}
 }
 
+func TestStripExplainAnalyze(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{"analyze select", "ANALYZE SELECT * FROM users", "SELECT * FROM users"},
+		{"lowercase analyze", "analyze select 1", "select 1"},
+		{"no analyze", "SELECT * FROM users", "SELECT * FROM users"},
+		{"analyze delete", "ANALYZE DELETE FROM users", "DELETE FROM users"},
+		{"leading whitespace before analyze", "  ANALYZE SELECT 1", "SELECT 1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := StripExplainAnalyze(c.sql); got != c.want {
+				t.Errorf("StripExplainAnalyze(%q) = %q, want %q", c.sql, got, c.want)
+			}
+		})
+	}
+}
+
+// TestIsReadAfterStripExplainAnalyze guards against #9: an ExplainSQL call
+// gates on IsRead(StripExplainAnalyze(sqlText)), so "ANALYZE SELECT ..."
+// must still read as a read (not misclassified as a write because ANALYZE
+// isn't a recognized read verb), while "ANALYZE DELETE ..." must not.
+func TestIsReadAfterStripExplainAnalyze(t *testing.T) {
+	if !IsRead(StripExplainAnalyze("ANALYZE SELECT * FROM users")) {
+		t.Error("expected ANALYZE SELECT to read as a read after stripping the modifier")
+	}
+	if IsRead(StripExplainAnalyze("ANALYZE DELETE FROM users")) {
+		t.Error("expected ANALYZE DELETE to still read as a write after stripping the modifier")
+	}
+}
+
 func TestClassifyDangerousAlwaysHasReason(t *testing.T) {
 	dangerous := []string{
 		"DROP TABLE t", "TRUNCATE t", "ALTER TABLE t ADD COLUMN x INT",
