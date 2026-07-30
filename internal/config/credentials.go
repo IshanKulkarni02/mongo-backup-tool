@@ -193,7 +193,20 @@ func RedactURI(raw string) string {
 	if _, hasPass := u.User.Password(); hasPass {
 		u.User = url.UserPassword(u.User.Username(), "****")
 	}
-	// url.String() percent-encodes "*" in the userinfo component; undo that
-	// so the mask reads as **** instead of %2A%2A%2A%2A.
-	return strings.ReplaceAll(u.String(), "%2A", "*")
+	full := u.String()
+	// url.String() percent-encodes "*" in the userinfo component; undo
+	// that so the mask reads as **** instead of %2A%2A%2A%2A — but only
+	// within the userinfo segment (everything before the first "@"), not
+	// the whole serialized URL. A pre-existing %2A elsewhere — e.g. a
+	// percent-encoded literal "*" in a query value, like
+	// "?token=abc%2Adef" — must survive untouched; net/url preserves
+	// RawQuery byte-for-byte, so a blanket replace corrupts it into
+	// "?token=abc*def". Splitting on the first "@" is safe here: a
+	// literal "@" inside userinfo is always percent-encoded as %40 by
+	// url.String() (verified directly), so the first unescaped "@" in
+	// the serialized URL can only be the userinfo/host delimiter.
+	if idx := strings.IndexByte(full, '@'); idx != -1 {
+		return strings.ReplaceAll(full[:idx], "%2A", "*") + full[idx:]
+	}
+	return full
 }
