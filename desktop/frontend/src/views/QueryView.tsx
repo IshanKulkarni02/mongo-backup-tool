@@ -22,6 +22,7 @@ import {
 } from "../../wailsjs/go/main/App";
 import { main, engine, safeguard, queryhistory } from "../../wailsjs/go/models";
 import { useJobUpdates, Job } from "../hooks/useJobs";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import { Button } from "../components/Button";
 import { Modal } from "../components/Modal";
 import { Input } from "../components/Input";
@@ -67,6 +68,7 @@ export function QueryView() {
   const toast = useToast();
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
+  const startDatabasesRequest = useStaleGuard();
 
   useEffect(() => {
     ListConnections().then((conns) => {
@@ -78,14 +80,18 @@ export function QueryView() {
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
       .then((dbs) => {
+        if (isStale()) return;
         setDatabases(dbs);
         if (dbs.length > 0) setDatabase(dbs[0]);
       })
-      .catch((e) => toast.push("error", String(e)));
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 

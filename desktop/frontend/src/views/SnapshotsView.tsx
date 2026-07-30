@@ -22,6 +22,7 @@ import { Select } from "../components/Select";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
 import { useJobUpdates, Job } from "../hooks/useJobs";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./SnapshotsView.css";
 
 const RELOAD_ON_JOB_TYPES = new Set(["snapshot-create", "snapshot-restore"]);
@@ -285,15 +286,23 @@ function DiffPanel({
   const [result, setResult] = useState<main.DiffSummaryResult | null>(null);
   const [loading, setLoading] = useState(false);
   const toast = useToast();
+  const startDiffRequest = useStaleGuard();
 
   useEffect(() => {
     if (!fromID) return;
+    const isStale = startDiffRequest();
     setLoading(true);
     setResult(null);
     DiffSnapshots(connection, database, fromID, toID)
-      .then(setResult)
-      .catch((e) => toast.push("error", String(e)))
-      .finally(() => setLoading(false));
+      .then((r) => {
+        if (!isStale()) setResult(r);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      })
+      .finally(() => {
+        if (!isStale()) setLoading(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, fromID, toID]);
 
