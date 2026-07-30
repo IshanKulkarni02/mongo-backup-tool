@@ -20,7 +20,7 @@ export function CancelJob(arg1:string):Promise<boolean>;
 
 export function CheckDependencies():Promise<Array<main.DependencyStatus>>;
 
-export function CheckOllama():Promise<depmanager.OllamaStatus>;
+export function CheckOllama(arg1:string):Promise<depmanager.OllamaStatus>;
 
 export function ClassifySQL(arg1:string):Promise<safeguard.Classification>;
 
