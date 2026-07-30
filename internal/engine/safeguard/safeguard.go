@@ -114,6 +114,20 @@ func IsRead(sqlText string) bool {
 	return false
 }
 
+var leadingAnalyzeRe = regexp.MustCompile(`(?i)^\s*ANALYZE\s+`)
+
+// StripExplainAnalyze removes a single leading "ANALYZE " token from
+// sqlText, for callers that classify a statement destined for a database's
+// EXPLAIN (see engine.SQLSession.Explain, which builds "EXPLAIN "+sqlText).
+// Postgres's EXPLAIN ANALYZE genuinely executes whatever follows, so
+// without this, IsRead/Classify would see the ANALYZE modifier as the
+// statement's verb — misreading "ANALYZE SELECT ..." as a non-read (which
+// would wrongly gate an ordinary read behind requireWritable) while still
+// correctly catching "ANALYZE DELETE ..." as one either way.
+func StripExplainAnalyze(sqlText string) string {
+	return leadingAnalyzeRe.ReplaceAllString(sqlText, "")
+}
+
 var finalVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER)\b`)
 
 func classifyWithCTE(upper string) Classification {
