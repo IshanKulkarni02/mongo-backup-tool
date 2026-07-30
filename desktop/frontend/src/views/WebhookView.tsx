@@ -66,6 +66,7 @@ export function WebhookView() {
   const [token, setToken] = useState("");
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [insertTarget, setInsertTarget] = useState<WebhookRequest | null>(null);
+  const [starting, setStarting] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -85,6 +86,7 @@ export function WebhookView() {
       toast.push("error", "Enter a valid port number");
       return;
     }
+    setStarting(true);
     try {
       const info = await StartWebhookListener(p);
       setAddr(info.addr);
@@ -93,6 +95,8 @@ export function WebhookView() {
       toast.push("success", `Listening on ${info.addr}`);
     } catch (e) {
       toast.push("error", String(e));
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -121,8 +125,8 @@ export function WebhookView() {
       <div className="query-bar">
         <Input placeholder="Port" value={port} onChange={(e) => setPort(e.target.value)} disabled={running} style={{ width: 120 }} />
         {!running ? (
-          <Button onClick={start}>
-            <Radio size={14} /> Start listening
+          <Button onClick={start} disabled={starting}>
+            <Radio size={14} /> {starting ? "Starting..." : "Start listening"}
           </Button>
         ) : (
           <Button variant="danger" onClick={stop}>

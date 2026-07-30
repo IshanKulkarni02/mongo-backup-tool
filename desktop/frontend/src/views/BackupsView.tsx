@@ -30,6 +30,7 @@ export function BackupsView() {
   const [restoreTarget, setRestoreTarget] = useState<store.Backup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<store.Backup | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const toast = useToast();
 
   const load = useCallback(() => {
@@ -72,6 +73,7 @@ export function BackupsView() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+    setDeleteBusy(true);
     try {
       await DeleteBackup(deleteTarget.id);
       toast.push("success", "Backup deleted");
@@ -79,6 +81,7 @@ export function BackupsView() {
     } catch (e) {
       toast.push("error", String(e));
     } finally {
+      setDeleteBusy(false);
       setDeleteTarget(null);
     }
   }
@@ -162,6 +165,7 @@ export function BackupsView() {
           message={`Delete backup ${deleteTarget.id.slice(0, 8)}? This removes the archive file permanently.`}
           confirmLabel="Delete"
           danger
+          busy={deleteBusy}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
         />
