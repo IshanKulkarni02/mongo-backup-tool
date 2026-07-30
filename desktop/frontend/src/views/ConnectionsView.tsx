@@ -506,6 +506,19 @@ function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded
     EngineIDs().then(setAvailableEngines).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (engine === "postgres" || engine === "mysql") return;
+    // SSH tunneling only applies to postgres/mysql — without this, the
+    // checkbox that controls showSSH disappears (it's only rendered for
+    // those engines) while the SSH fields stay visible and their stale
+    // values still get submitted with the new engine.
+    setShowSSH(false);
+    setSshHost("");
+    setSshUser("");
+    setSshPassword("");
+    setSshPrivateKey("");
+  }, [engine]);
+
   async function browseSQLiteFile() {
     try {
       const path = await PickSQLiteFile();
