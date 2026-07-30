@@ -27,7 +27,7 @@ import { Select } from "../components/Select";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { useToast } from "../components/Toast";
 import { useUIMode } from "../lib/uiMode";
-import { quoteIdent, sqlLiteral, buildSelectList } from "../lib/sql";
+import { quoteIdent, sqlLiteral, sqlValueForCell, buildSelectList } from "../lib/sql";
 import "./BrowserView.css";
 import "./TableView.css";
 import "./WebhookView.css"; // shares the mapping-row layout ImportCSVModal reuses
@@ -250,7 +250,7 @@ function RowsPanel({
     // rowFilter narrows to the single referenced row after a foreign-key
     // click navigated here — same query shape, just WHERE-qualified.
     const whereClause = rowFilter
-      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type, engineId)}`
+      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlValueForCell(rowFilter.cell, engineId)}`
       : "";
     RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident}${whereClause} LIMIT ${ROW_LIMIT}`)
       .then(setResult)
@@ -290,8 +290,12 @@ function RowsPanel({
     const pkCell = result.rows[rowIndex][pkCol];
     if (!pkCell) return;
     const ident = quoteIdent(engineId, table);
+    // newDisplay is always a literal edited value, never inferred as
+    // NULL from its text content (see sqlLiteral/sqlValueForCell) — a
+    // column that legitimately stores the string "null" must be settable
+    // to exactly that.
     const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string", engineId)}`;
-    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
+    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlValueForCell(pkCell, engineId)}`;
     try {
       // Always a WHERE-qualified single-row UPDATE, so it's never
       // classified Safe-Mode-dangerous — the confirm param only matters
@@ -651,7 +655,7 @@ function RelationshipInspector({
     setChildRows(null);
     referencingTables.forEach((ref) => {
       const ident = quoteIdent(engineId, ref.table);
-      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
+      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlValueForCell(pkCell, engineId)}`;
       RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`)
         .then((r) => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length })))
         .catch(() => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" })));
