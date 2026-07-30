@@ -59,20 +59,31 @@ func TestSaveMovesPasswordToKeyringWhenAvailable(t *testing.T) {
 }
 
 func TestSaveKeepsFullURIWithoutKeyring(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("DBHELM_CONFIG_DIR", dir)
-	// Force keyring.Available() to be false by not calling MockInit and
-	// instead exercising the real (unavailable-in-CI) backend indirectly is
-	// unreliable across platforms, so this test only asserts the documented
-	// fallback behavior via a manual stripCredentials call bypassing the
-	// keyring probe — Available() itself is exercised by the happy-path
-	// test above via MockInit.
+	withTempConfigDir(t)
+	secrets.MockUnavailable()
+
 	cfg := &Config{Connections: []Connection{
-		{Name: "local", URI: "mongodb://localhost:27017", CreatedAt: "now"},
+		{Name: "local", URI: "mongodb://user:hunter2@localhost:27017", CreatedAt: "now"},
 	}}
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
+
+	// Without a keyring, the password has nowhere safe to move to, so the
+	// pre-keychain fallback keeps it in the URI on disk (protected only by
+	// the config file's 0600 mode) rather than silently dropping it.
+	path, err := filePath()
+	if err != nil {
+		t.Fatalf("filePath: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading saved config: %v", err)
+	}
+	if !strings.Contains(string(raw), "hunter2") {
+		t.Fatalf("expected password to remain in the on-disk fallback without a keyring, got: %s", raw)
+	}
+
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -81,8 +92,11 @@ func TestSaveKeepsFullURIWithoutKeyring(t *testing.T) {
 	if !ok {
 		t.Fatal("connection not found")
 	}
-	if conn.URI != "mongodb://localhost:27017" {
-		t.Fatalf("unexpected URI for a passwordless connection: %q", conn.URI)
+	if conn.URI != "mongodb://user:hunter2@localhost:27017" {
+		t.Fatalf("expected password preserved without a keyring, got %q", conn.URI)
+	}
+	if conn.CredentialRef != "" {
+		t.Fatalf("expected no CredentialRef without a keyring, got %q", conn.CredentialRef)
 	}
 }
 

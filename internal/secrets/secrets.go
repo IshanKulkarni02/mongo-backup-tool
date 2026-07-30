@@ -99,3 +99,14 @@ func MockInit() {
 	cache = map[string]string{}
 	cacheMu.Unlock()
 }
+
+// MockUnavailable forces Available() to report false, for tests that need
+// to exercise the plaintext-fallback path without depending on whether a
+// real system keyring happens to be present in the test environment.
+func MockUnavailable() {
+	probeOnce.Do(func() {})
+	probeOK = false
+	cacheMu.Lock()
+	cache = map[string]string{}
+	cacheMu.Unlock()
+}

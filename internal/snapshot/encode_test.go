@@ -72,6 +72,18 @@ func TestIdKeyNonObjectID(t *testing.T) {
 	if key != key2 {
 		t.Errorf("idKey not stable: %q vs %q", key, key2)
 	}
+
+	// Different _id values must produce different keys — a collision here
+	// would silently merge distinct documents under the diff engine's
+	// merge-join.
+	other := bson.D{{Key: "_id", Value: "another-id-456"}, {Key: "name", Value: "widget"}}
+	otherKey, err := idKey(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if otherKey == key {
+		t.Errorf("expected different _id values to produce different keys, both got %q", key)
+	}
 }
 
 func TestIdKeyMissing(t *testing.T) {
