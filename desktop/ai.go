@@ -222,9 +222,10 @@ func (a *App) GenerateMockData(connectionName, database, dialect, table string, 
 	return a.runAIStream(ai.BuildMockDataPrompt(dialect, table, describeSchema(schema), rowCount))
 }
 
-// CheckOllama reports whether a local Ollama instance is installed/running.
-func (a *App) CheckOllama() depmanager.OllamaStatus {
-	return depmanager.CheckOllama(context.Background())
+// CheckOllama reports whether Ollama is installed/running at host (the
+// local default if host is "").
+func (a *App) CheckOllama(host string) depmanager.OllamaStatus {
+	return depmanager.CheckOllama(context.Background(), host)
 }
 
 // InstallOllama installs Ollama via the OS package manager as a background

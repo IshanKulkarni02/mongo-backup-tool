@@ -117,8 +117,8 @@ function OllamaManager({ ollamaHost }: { ollamaHost: string }) {
   const toast = useToast();
 
   const checkStatus = useCallback(() => {
-    CheckOllama().then(setStatus);
-  }, []);
+    CheckOllama(ollamaHost).then(setStatus);
+  }, [ollamaHost]);
 
   const loadModels = useCallback(() => {
     ListOllamaModels(ollamaHost).then(setModels).catch(() => setModels([]));
