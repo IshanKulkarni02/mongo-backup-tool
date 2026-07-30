@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
@@ -59,8 +60,19 @@ func GenerateOpenAPI(schema engine.TableSchema, schemaName string) string {
 	return sb.String()
 }
 
+// pascalCase turns s into a valid TypeScript/Python identifier in
+// PascalCase, for use as the default generated interface/class/schema
+// name when the caller doesn't supply one explicitly. Splitting on any
+// non-letter, non-digit rune (not just "_"/"-") means characters like
+// spaces that are legal in a quoted SQL identifier — e.g. a table named
+// "my table" or "2fa_codes" — can't produce a name with embedded spaces
+// or other syntax-breaking characters; a leading digit (still possible
+// after that split, e.g. "2fa_codes" -> "2FaCodes") is handled
+// separately since it isn't a separator character on its own.
 func pascalCase(s string) string {
-	parts := strings.FieldsFunc(s, func(r rune) bool { return r == '_' || r == '-' })
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 	var sb strings.Builder
 	for _, p := range parts {
 		if p == "" {
@@ -69,8 +81,13 @@ func pascalCase(s string) string {
 		sb.WriteString(strings.ToUpper(p[:1]))
 		sb.WriteString(p[1:])
 	}
-	if sb.Len() == 0 {
-		return s
+	out := sb.String()
+	if out == "" {
+		// No letters or digits at all (e.g. the name was just "___").
+		return "T"
 	}
-	return sb.String()
+	if out[0] >= '0' && out[0] <= '9' {
+		out = "T" + out
+	}
+	return out
 }
