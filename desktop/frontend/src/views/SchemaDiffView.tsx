@@ -73,6 +73,13 @@ function ConnDbPicker({
 
 const CHANGE_LABELS: Record<string, string> = { added: "Added", removed: "Removed", modified: "Modified", unchanged: "Unchanged" };
 
+interface DiffedPair {
+  connA: string;
+  dbA: string;
+  connB: string;
+  dbB: string;
+}
+
 export function SchemaDiffView() {
   const [connections, setConnections] = useState<main.ConnectionInfo[]>([]);
   const [connA, setConnA] = useState("");
@@ -85,11 +92,45 @@ export function SchemaDiffView() {
   const [dialect, setDialect] = useState("postgres");
   const [migration, setMigration] = useState<schemadiff.Migration | null>(null);
   const [showSave, setShowSave] = useState(false);
+  // The exact connection/database pair the currently-displayed diffs
+  // actually came from — captured once DiffSchemas succeeds, and cleared
+  // whenever any of the four selects change afterward. generateMigration
+  // reads this snapshot instead of the live connA/dbA/connB/dbB state, so
+  // it can never silently generate a migration for a different pair than
+  // the one the diff table on screen is showing (e.g. diffing A vs B,
+  // then changing "After" to C without re-running Diff — the diff table
+  // clears immediately in that case instead of misleadingly continuing
+  // to show the stale A-vs-B result).
+  const [diffedPair, setDiffedPair] = useState<DiffedPair | null>(null);
   const toast = useToast();
 
   useEffect(() => {
     ListConnections().then((conns) => setConnections(conns.filter((c) => c.capabilities?.sql)));
   }, []);
+
+  function clearDiffState() {
+    setDiffs(null);
+    setMigration(null);
+    setDiffedPair(null);
+    setError("");
+  }
+
+  function updateConnA(v: string) {
+    setConnA(v);
+    clearDiffState();
+  }
+  function updateDbA(v: string) {
+    setDbA(v);
+    clearDiffState();
+  }
+  function updateConnB(v: string) {
+    setConnB(v);
+    clearDiffState();
+  }
+  function updateDbB(v: string) {
+    setDbB(v);
+    clearDiffState();
+  }
 
   async function runDiff() {
     if (!connA || !dbA || !connB || !dbB) return;
@@ -99,17 +140,20 @@ export function SchemaDiffView() {
     try {
       const result = await DiffSchemas(connA, dbA, connB, dbB);
       setDiffs(result);
+      setDiffedPair({ connA, dbA, connB, dbB });
     } catch (e) {
       setError(String(e));
       setDiffs(null);
+      setDiffedPair(null);
     } finally {
       setLoading(false);
     }
   }
 
   async function generateMigration() {
+    if (!diffedPair) return;
     try {
-      const m = await GenerateSchemaMigration(connA, dbA, connB, dbB, dialect);
+      const m = await GenerateSchemaMigration(diffedPair.connA, diffedPair.dbA, diffedPair.connB, diffedPair.dbB, dialect);
       setMigration(m);
     } catch (e) {
       toast.push("error", String(e));
@@ -135,8 +179,8 @@ export function SchemaDiffView() {
       ) : (
         <>
           <div className="diff-picker-row">
-            <ConnDbPicker label="Before" connections={connections} connection={connA} setConnection={setConnA} database={dbA} setDatabase={setDbA} />
-            <ConnDbPicker label="After" connections={connections} connection={connB} setConnection={setConnB} database={dbB} setDatabase={setDbB} />
+            <ConnDbPicker label="Before" connections={connections} connection={connA} setConnection={updateConnA} database={dbA} setDatabase={updateDbA} />
+            <ConnDbPicker label="After" connections={connections} connection={connB} setConnection={updateConnB} database={dbB} setDatabase={updateDbB} />
           </div>
 
           <div className="query-bar">
