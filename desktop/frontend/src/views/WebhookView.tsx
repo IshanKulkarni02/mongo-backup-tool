@@ -30,12 +30,17 @@ import "./WebhookView.css";
 // string values suitable for a SQL literal — objects/arrays are
 // JSON-stringified rather than excluded, so a mapping can still target
 // them (e.g. into a JSON/JSONB column) even though most device payloads
-// are flat.
-function flattenTopLevel(payload: unknown): Record<string, string> {
+// are flat. A JSON `null` value maps to the JS value `null` rather than
+// being stringified to the text "null": JSON.stringify(null) would
+// otherwise produce that exact string, indistinguishable from a payload
+// field whose actual value is the string "null" — collapsing a
+// genuinely-null field and one containing the literal word into the same
+// text before submitSQL ever gets a chance to tell them apart.
+function flattenTopLevel(payload: unknown): Record<string, string | null> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  const out: Record<string, string> = {};
+  const out: Record<string, string | null> = {};
   for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
-    out[k] = typeof v === "string" ? v : JSON.stringify(v);
+    out[k] = v === null ? null : typeof v === "string" ? v : JSON.stringify(v);
   }
   return out;
 }
@@ -268,9 +273,16 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       const cols = mapped.map((c) => quoteIdent(activeEngine, c.name)).join(", ");
       const vals = mapped
         .map((c) => {
-          const raw = flatFields[mapping[c.name]] ?? "";
-          const looksNumeric = /^-?\d+(\.\d+)?$/.test(raw.trim());
-          return sqlLiteral(raw, looksNumeric ? "number" : "string", activeEngine);
+          const raw = flatFields[mapping[c.name]];
+          // Only an actual JS null (a genuinely-null JSON field) becomes
+          // SQL NULL — a mapped field that's simply absent still falls
+          // back to an empty string (the prior behavior), and a field
+          // whose value is literally the text "null" is never confused
+          // with either.
+          if (raw === null) return "NULL";
+          const value = raw ?? "";
+          const looksNumeric = /^-?\d+(\.\d+)?$/.test(value.trim());
+          return sqlLiteral(value, looksNumeric ? "number" : "string", activeEngine);
         })
         .join(", ");
       const sql = `INSERT INTO ${ident} (${cols}) VALUES (${vals})`;
