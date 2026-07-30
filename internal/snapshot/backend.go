@@ -59,12 +59,20 @@ func scopeBackendKind(scope string) (BackendKind, error) {
 	return m.Kind, nil
 }
 
+// writeScopeBackendKind writes backend.json via writeFileAtomic (temp file
+// + fsync + rename), the same protection manifest.go already gives
+// index.json/manifest.json. This file is read by scopeBackendKind on
+// every OpenBackend call for the scope, and unlike a corrupt/missing
+// manifest (recoverAbandonedManifests can clean that up), there's no
+// recovery path for a torn backend.json — a crash mid-write here would
+// otherwise leave the entire connection+database's snapshot history
+// permanently unopenable.
 func writeScopeBackendKind(scope string, kind BackendKind) error {
 	data, err := json.MarshalIndent(backendMarker{Kind: kind}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(markerPath(scope), data, 0o644)
+	return writeFileAtomic(markerPath(scope), data)
 }
 
 // OpenBackend opens the backend a scope already uses, or — for a brand-new
