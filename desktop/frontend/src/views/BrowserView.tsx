@@ -77,15 +77,22 @@ export function BrowserView({
   const toast = useToast();
 
   useEffect(() => {
-    ListConnections().then((conns) => {
-      setConnections(conns);
-      if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
-        setConnection(pendingTarget.connection);
-      } else if (conns.length > 0) {
-        setConnection(conns[0].name);
-      }
-      onConsumeInitialTarget?.();
-    });
+    ListConnections()
+      .then((conns) => {
+        setConnections(conns);
+        if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
+          setConnection(pendingTarget.connection);
+        } else if (conns.length > 0) {
+          setConnection(conns[0].name);
+        }
+      })
+      .catch((e) => {
+        // Without this, a rejection here left onConsumeInitialTarget
+        // uncalled — the parent's pending openTarget state would dangle
+        // forever, on top of the connections list silently staying empty.
+        toast.push("error", String(e));
+      })
+      .finally(() => onConsumeInitialTarget?.());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

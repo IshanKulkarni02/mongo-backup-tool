@@ -33,7 +33,15 @@ export function BackupsView() {
   const toast = useToast();
 
   const load = useCallback(() => {
-    ListBackups().then(setBackups);
+    ListBackups()
+      .then(setBackups)
+      .catch((e) => {
+        // Without this, backups stayed null forever on failure — stuck
+        // on the loading Skeleton with no error shown.
+        setBackups([]);
+        toast.push("error", String(e));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -181,7 +189,10 @@ function CreateBackupModal({ onClose, onCreated }: { onClose: () => void; onCrea
     if (!connection) return;
     setDatabases([]);
     setDatabase("");
-    TestConnection(connection).then(setDatabases);
+    TestConnection(connection)
+      .then(setDatabases)
+      .catch((e) => toast.push("error", String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   async function submit() {
