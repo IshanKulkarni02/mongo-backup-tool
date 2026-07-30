@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -67,13 +68,23 @@ var connectionAddCmd = &cobra.Command{
 			return fmt.Errorf("--ssh-host needs --ssh-password or --ssh-key")
 		}
 		// --ssh-key takes a path to a PEM-encoded private key file (the
-		// common case for CLI use); if it isn't a real file, treat it as
-		// literal PEM content instead, for scripted/embedded use.
+		// common case for CLI use), or literal PEM content directly (for
+		// scripted/embedded use). looksLikeSSHKeyPath tells the two apart:
+		// literal PEM content always spans multiple lines or contains a
+		// "-----BEGIN" marker, neither of which is valid in a filesystem
+		// path. Only a value that looks like a path is actually read as
+		// one — and if that read fails (typo, permissions, a directory),
+		// the error is surfaced instead of silently falling back to
+		// treating the path string itself as the key's PEM content, which
+		// would save an unusable key with no indication anything went
+		// wrong until the SSH tunnel later fails to parse it.
 		sshPrivateKey := connAddSSHKey
-		if connAddSSHKey != "" {
-			if data, err := os.ReadFile(connAddSSHKey); err == nil {
-				sshPrivateKey = string(data)
+		if connAddSSHKey != "" && looksLikeSSHKeyPath(connAddSSHKey) {
+			data, err := os.ReadFile(connAddSSHKey)
+			if err != nil {
+				return fmt.Errorf("failed to read --ssh-key file %q: %w", connAddSSHKey, err)
 			}
+			sshPrivateKey = string(data)
 		}
 		if connAddTenantSessionVar != "" && !engine.ValidSessionVarName(connAddTenantSessionVar) {
 			return fmt.Errorf("invalid --tenant-session-var %q", connAddTenantSessionVar)
@@ -109,6 +120,15 @@ var connectionAddCmd = &cobra.Command{
 		fmt.Printf("Saved connection %q\n", name)
 		return nil
 	},
+}
+
+// looksLikeSSHKeyPath reports whether raw is a filesystem path rather
+// than literal PEM key content. PEM content always spans multiple lines
+// or contains a "-----BEGIN" marker, neither of which is valid in a path
+// on any platform this tool supports, so their presence is a reliable
+// signal that raw wasn't meant to be read as a file.
+func looksLikeSSHKeyPath(raw string) bool {
+	return !strings.Contains(raw, "\n") && !strings.Contains(raw, "-----BEGIN")
 }
 
 var connectionListCmd = &cobra.Command{
