@@ -12,8 +12,8 @@ func col(name, dataType string, nullable, pk bool) engine.Column {
 }
 
 func TestDiffUnchangedTable(t *testing.T) {
-	before := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}}}
-	after := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}}}
+	before := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}, PrimaryKey: []string{"id"}}}
+	after := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}, PrimaryKey: []string{"id"}}}
 
 	diffs := Diff(before, after)
 	if len(diffs) != 1 {
@@ -28,7 +28,7 @@ func TestDiffUnchangedTable(t *testing.T) {
 }
 
 func TestDiffAddedTable(t *testing.T) {
-	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}}}
+	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}, PrimaryKey: []string{"id"}}}
 	diffs := Diff(nil, after)
 	if len(diffs) != 1 || diffs[0].Change != TableAdded {
 		t.Fatalf("expected 1 added table, got %+v", diffs)
@@ -36,10 +36,13 @@ func TestDiffAddedTable(t *testing.T) {
 	if diffs[0].Columns[0].Change != ColumnAdded {
 		t.Fatalf("expected column marked added, got %+v", diffs[0].Columns)
 	}
+	if len(diffs[0].PrimaryKey) != 1 || diffs[0].PrimaryKey[0] != "id" {
+		t.Fatalf("expected PrimaryKey to carry over from the schema, got %+v", diffs[0].PrimaryKey)
+	}
 }
 
 func TestDiffRemovedTable(t *testing.T) {
-	before := []engine.TableSchema{{Name: "legacy", Columns: []engine.Column{col("id", "INT", false, true)}}}
+	before := []engine.TableSchema{{Name: "legacy", Columns: []engine.Column{col("id", "INT", false, true)}, PrimaryKey: []string{"id"}}}
 	diffs := Diff(before, nil)
 	if len(diffs) != 1 || diffs[0].Change != TableRemoved {
 		t.Fatalf("expected 1 removed table, got %+v", diffs)
@@ -86,11 +89,11 @@ func TestDiffColumnAddedRemovedModified(t *testing.T) {
 }
 
 func TestGenerateMigrationPostgresIsTransactional(t *testing.T) {
-	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}}}
+	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}, PrimaryKey: []string{"id"}}}
 	diffs := Diff(nil, after)
 	m := GenerateMigration(diffs, "postgres")
 
-	want := "BEGIN;\n\nCREATE TABLE orders (\n  id INT NOT NULL PRIMARY KEY\n);\n\nCOMMIT;\n"
+	want := "BEGIN;\n\nCREATE TABLE orders (\n  id INT NOT NULL,\n  PRIMARY KEY (id)\n);\n\nCOMMIT;\n"
 	if m.SQL != want {
 		t.Fatalf("unexpected SQL:\ngot:\n%s\nwant:\n%s", m.SQL, want)
 	}
@@ -99,8 +102,39 @@ func TestGenerateMigrationPostgresIsTransactional(t *testing.T) {
 	}
 }
 
+// TestGenerateMigrationCompositePrimaryKey guards against #17:
+// fmtColumnDef used to append a bare PRIMARY KEY to every column with
+// IsPK == true, so a composite-key table generated DDL with PRIMARY KEY
+// on two separate columns — invalid in both Postgres ("multiple primary
+// keys ... are not allowed") and MySQL ("Multiple primary key defined").
+// The primary key must now be a single table-level constraint built from
+// TableSchema.PrimaryKey (which preserves declared column order, unlike
+// the flat per-column IsPK bool), and no column definition should carry
+// an inline PRIMARY KEY at all.
+func TestGenerateMigrationCompositePrimaryKey(t *testing.T) {
+	after := []engine.TableSchema{{
+		Name: "order_items",
+		Columns: []engine.Column{
+			col("order_id", "INT", false, true),
+			col("product_id", "INT", false, true),
+			col("qty", "INT", false, false),
+		},
+		PrimaryKey: []string{"order_id", "product_id"},
+	}}
+	diffs := Diff(nil, after)
+	m := GenerateMigration(diffs, "postgres")
+
+	want := "BEGIN;\n\nCREATE TABLE order_items (\n  order_id INT NOT NULL,\n  product_id INT NOT NULL,\n  qty INT NOT NULL,\n  PRIMARY KEY (order_id, product_id)\n);\n\nCOMMIT;\n"
+	if m.SQL != want {
+		t.Fatalf("unexpected SQL:\ngot:\n%s\nwant:\n%s", m.SQL, want)
+	}
+	if strings.Count(m.SQL, "PRIMARY KEY") != 1 {
+		t.Fatalf("expected exactly one PRIMARY KEY clause (table-level), got:\n%s", m.SQL)
+	}
+}
+
 func TestGenerateMigrationMySQLWarnsNonTransactional(t *testing.T) {
-	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}}}
+	after := []engine.TableSchema{{Name: "orders", Columns: []engine.Column{col("id", "INT", false, true)}, PrimaryKey: []string{"id"}}}
 	diffs := Diff(nil, after)
 	m := GenerateMigration(diffs, "mysql")
 
@@ -113,8 +147,8 @@ func TestGenerateMigrationMySQLWarnsNonTransactional(t *testing.T) {
 }
 
 func TestGenerateMigrationAddedAndRemovedColumns(t *testing.T) {
-	before := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("old_col", "TEXT", true, false)}}}
-	after := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}}}
+	before := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("old_col", "TEXT", true, false)}, PrimaryKey: []string{"id"}}}
+	after := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true), col("email", "TEXT", false, false)}, PrimaryKey: []string{"id"}}}
 
 	diffs := Diff(before, after)
 	m := GenerateMigration(diffs, "postgres")
@@ -143,7 +177,7 @@ func TestGenerateMigrationModifiedColumnIsManualReviewOnly(t *testing.T) {
 }
 
 func TestGenerateMigrationNoChangesIsANoOp(t *testing.T) {
-	same := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true)}}}
+	same := []engine.TableSchema{{Name: "users", Columns: []engine.Column{col("id", "INT", false, true)}, PrimaryKey: []string{"id"}}}
 	diffs := Diff(same, same)
 	m := GenerateMigration(diffs, "postgres")
 	if m.SQL != "-- no schema changes detected\n" {
