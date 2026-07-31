@@ -402,7 +402,12 @@ func quoteIdentSQL(engineID, name string) string {
 }
 
 func isBinaryDataType(dbType string) bool {
-	switch dbType {
+	// information_schema.columns.data_type is reported lowercase for both
+	// Postgres ("bytea") and MySQL ("blob"/"binary"/"varbinary"); only the
+	// SQLite test schema happens to declare BLOB uppercase, which is why a
+	// plain-uppercase comparison here worked in tests but never matched
+	// real Postgres/MySQL binary columns.
+	switch strings.ToUpper(dbType) {
 	case "BYTEA", "BLOB", "BINARY", "VARBINARY":
 		return true
 	}
