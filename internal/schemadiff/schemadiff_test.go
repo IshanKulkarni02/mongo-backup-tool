@@ -90,12 +90,44 @@ func TestGenerateMigrationPostgresIsTransactional(t *testing.T) {
 	diffs := Diff(nil, after)
 	m := GenerateMigration(diffs, "postgres")
 
-	want := "BEGIN;\n\nCREATE TABLE orders (\n  id INT NOT NULL PRIMARY KEY\n);\n\nCOMMIT;\n"
+	want := "BEGIN;\n\nCREATE TABLE \"orders\" (\n  \"id\" INT NOT NULL PRIMARY KEY\n);\n\nCOMMIT;\n"
 	if m.SQL != want {
 		t.Fatalf("unexpected SQL:\ngot:\n%s\nwant:\n%s", m.SQL, want)
 	}
 	if len(m.Warnings) != 0 {
 		t.Fatalf("expected no warnings for a transactional dialect, got %v", m.Warnings)
+	}
+}
+
+// TestGenerateMigrationQuotesReservedWordIdentifiers guards against #18:
+// table/column names come verbatim from live DB introspection with no
+// identifier quoting, so an ordinary schema using a reserved word (order,
+// group, user, select) as a name produced syntactically invalid DDL, e.g.
+// "DROP TABLE order;" — no adversarial input needed. Postgres/SQLite use
+// double quotes; MySQL uses backticks.
+func TestGenerateMigrationQuotesReservedWordIdentifiers(t *testing.T) {
+	before := []engine.TableSchema{{Name: "order", Columns: []engine.Column{col("id", "INT", false, true), col("select", "TEXT", true, false)}}}
+
+	postgres := GenerateMigration(Diff(before, nil), "postgres")
+	if !strings.Contains(postgres.SQL, `DROP TABLE "order";`) {
+		t.Fatalf("expected quoted DROP TABLE for postgres, got:\n%s", postgres.SQL)
+	}
+
+	mysql := GenerateMigration(Diff(before, nil), "mysql")
+	if !strings.Contains(mysql.SQL, "DROP TABLE `order`;") {
+		t.Fatalf("expected backtick-quoted DROP TABLE for mysql, got:\n%s", mysql.SQL)
+	}
+
+	after := []engine.TableSchema{{Name: "group", Columns: []engine.Column{col("select", "TEXT", true, false)}}}
+	createPostgres := GenerateMigration(Diff(nil, after), "postgres")
+	want := "BEGIN;\n\nCREATE TABLE \"group\" (\n  \"select\" TEXT\n);\n\nCOMMIT;\n"
+	if createPostgres.SQL != want {
+		t.Fatalf("unexpected SQL:\ngot:\n%s\nwant:\n%s", createPostgres.SQL, want)
+	}
+
+	createMySQL := GenerateMigration(Diff(nil, after), "mysql")
+	if !strings.Contains(createMySQL.SQL, "CREATE TABLE `group` (\n  `select` TEXT\n") {
+		t.Fatalf("expected backtick-quoted CREATE TABLE for mysql, got:\n%s", createMySQL.SQL)
 	}
 }
 
@@ -119,10 +151,10 @@ func TestGenerateMigrationAddedAndRemovedColumns(t *testing.T) {
 	diffs := Diff(before, after)
 	m := GenerateMigration(diffs, "postgres")
 
-	if !strings.Contains(m.SQL, "ALTER TABLE users ADD COLUMN email TEXT NOT NULL;") {
+	if !strings.Contains(m.SQL, `ALTER TABLE "users" ADD COLUMN "email" TEXT NOT NULL;`) {
 		t.Fatalf("expected ADD COLUMN statement, got:\n%s", m.SQL)
 	}
-	if !strings.Contains(m.SQL, "ALTER TABLE users DROP COLUMN old_col;") {
+	if !strings.Contains(m.SQL, `ALTER TABLE "users" DROP COLUMN "old_col";`) {
 		t.Fatalf("expected DROP COLUMN statement, got:\n%s", m.SQL)
 	}
 }
