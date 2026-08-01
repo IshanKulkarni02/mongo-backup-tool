@@ -18,13 +18,25 @@ import (
 
 const QueryRowCap = 500
 
+// QueryExecer is the common surface RunQuery/RunExec/FormatExplainRows
+// need — satisfied by both *sql.DB (the shared pool, the normal case) and
+// *sql.Conn (a single pinned connection, needed when a caller must run a
+// session-scoped statement like MySQL's USE <database> immediately before
+// the query and guarantee both land on the same underlying connection,
+// which database/sql's pool doesn't otherwise promise across two separate
+// calls against a *sql.DB).
+type QueryExecer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 // RunQuery executes a read query and converts the result set into an
 // engine.SQLResult, capping rows at QueryRowCap so an unbounded "SELECT *"
 // against a huge table can't exhaust memory. Total is set to the number of
 // rows actually returned; ad-hoc SQL isn't re-counted with a second query,
 // so a full result (== cap) doesn't necessarily mean there were exactly
 // that many rows.
-func RunQuery(ctx context.Context, db *sql.DB, sqlText string) (engine.SQLResult, error) {
+func RunQuery(ctx context.Context, db QueryExecer, sqlText string) (engine.SQLResult, error) {
 	rows, err := db.QueryContext(ctx, sqlText)
 	if err != nil {
 		return engine.SQLResult{}, err
@@ -148,7 +160,7 @@ func isBinaryDBType(dbType string) bool {
 // uniformly whether the dialect returns one text column (Postgres'
 // default EXPLAIN) or several (MySQL's EXPLAIN, SQLite's EXPLAIN QUERY
 // PLAN).
-func FormatExplainRows(ctx context.Context, db *sql.DB, explainQuery string) (string, error) {
+func FormatExplainRows(ctx context.Context, db QueryExecer, explainQuery string) (string, error) {
 	rows, err := db.QueryContext(ctx, explainQuery)
 	if err != nil {
 		return "", err
@@ -198,7 +210,7 @@ func joinPipe(parts []string) string {
 }
 
 // RunExec executes a data-modifying statement and returns rows affected.
-func RunExec(ctx context.Context, db *sql.DB, sqlText string) (int64, error) {
+func RunExec(ctx context.Context, db QueryExecer, sqlText string) (int64, error) {
 	res, err := db.ExecContext(ctx, sqlText)
 	if err != nil {
 		return 0, err
