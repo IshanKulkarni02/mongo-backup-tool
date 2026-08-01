@@ -132,7 +132,7 @@ export function TableView({
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">{beginner ? "My Data" : "Tables"}</h1>
+        <h1 className="view-title">{beginner ? "My Tables" : "Tables"}</h1>
       </div>
 
       {connections.length === 0 ? (
