@@ -48,6 +48,13 @@ type TableDiff struct {
 	Table   string       `json:"table"`
 	Change  TableChange  `json:"change"`
 	Columns []ColumnDiff `json:"columns"`
+	// PrimaryKey is the table's primary-key column names (see
+	// engine.TableSchema.PrimaryKey), populated for TableAdded so
+	// renderCreateTable can emit a single table-level PRIMARY KEY
+	// constraint instead of a per-column one — the latter is invalid DDL
+	// for a composite key (both Postgres and MySQL reject more than one
+	// inline PRIMARY KEY column).
+	PrimaryKey []string `json:"primaryKey,omitempty"`
 }
 
 // Diff compares two full-schema snapshots (every table on each side) and
@@ -73,7 +80,7 @@ func Diff(before, after []engine.TableSchema) []TableDiff {
 		case hasBefore && !hasAfter:
 			out = append(out, TableDiff{Table: name, Change: TableRemoved, Columns: allColumns(&b, nil)})
 		case !hasBefore && hasAfter:
-			out = append(out, TableDiff{Table: name, Change: TableAdded, Columns: allColumns(nil, &a)})
+			out = append(out, TableDiff{Table: name, Change: TableAdded, Columns: allColumns(nil, &a), PrimaryKey: a.PrimaryKey})
 		default:
 			cols := diffColumns(b, a)
 			change := TableUnchanged
@@ -176,13 +183,15 @@ func HasChanges(diffs []TableDiff) bool {
 }
 
 // fmtColumnDef renders one column as it would appear in a CREATE TABLE.
+// Primary keys are deliberately never rendered inline here — renderCreateTable
+// emits them as a single table-level PRIMARY KEY (...) constraint instead
+// (see TableDiff.PrimaryKey), since a per-column PRIMARY KEY clause is
+// invalid DDL for a composite key (both Postgres and MySQL reject more
+// than one inline PRIMARY KEY column).
 func fmtColumnDef(c engine.Column) string {
 	def := fmt.Sprintf("%s %s", c.Name, c.DataType)
 	if !c.Nullable {
 		def += " NOT NULL"
-	}
-	if c.IsPK {
-		def += " PRIMARY KEY"
 	}
 	return def
 }
