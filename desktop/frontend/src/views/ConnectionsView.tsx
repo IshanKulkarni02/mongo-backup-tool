@@ -288,7 +288,7 @@ function SwitchTenantModal({
   );
 }
 
-const ENGINE_LABELS: Record<string, string> = {
+export const ENGINE_LABELS: Record<string, string> = {
   mongodb: "MongoDB",
   postgres: "PostgreSQL",
   mysql: "MySQL",
