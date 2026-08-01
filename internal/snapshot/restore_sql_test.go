@@ -46,6 +46,39 @@ func TestSQLLiteralForRestoreEscapesMySQLBackslash(t *testing.T) {
 	}
 }
 
+// TestIsBinaryDataType guards against #15: information_schema.columns.
+// data_type is reported lowercase for both Postgres ("bytea") and MySQL
+// ("blob"/"binary"/"varbinary") — only the SQLite test schema happens to
+// declare BLOB uppercase, so a plain-uppercase comparison here matched in
+// tests but never matched a real Postgres/MySQL binary column, silently
+// corrupting (MySQL) or outright failing (Postgres) their restore.
+func TestIsBinaryDataType(t *testing.T) {
+	cases := []struct {
+		dbType string
+		want   bool
+	}{
+		{"bytea", true}, // Postgres, as reported
+		{"BYTEA", true},
+		{"blob", true}, // MySQL, as reported
+		{"BLOB", true},
+		{"binary", true}, // MySQL, as reported
+		{"BINARY", true},
+		{"varbinary", true}, // MySQL, as reported
+		{"VARBINARY", true},
+		{"VarBinary", true},
+		{"text", false},
+		{"integer", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.dbType, func(t *testing.T) {
+			if got := isBinaryDataType(c.dbType); got != c.want {
+				t.Errorf("isBinaryDataType(%q) = %v, want %v", c.dbType, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRestoreSQLRoundTripBasic(t *testing.T) {
 	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
 	s := openSQLiteTestSession(t)

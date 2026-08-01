@@ -29,6 +29,28 @@ func mustExec(t *testing.T, s *Session, sqlText string) {
 	}
 }
 
+// TestSQLiteOpenEnablesForeignKeyEnforcement covers issue #8: Open() runs
+// "PRAGMA foreign_keys = ON" itself (this URI, unlike openTestSession's,
+// carries no "_pragma=foreign_keys(1)" DSN param), so a violating insert
+// must be rejected — confirming the pragma actually took effect rather
+// than its error being silently swallowed.
+func TestSQLiteOpenEnablesForeignKeyEnforcement(t *testing.T) {
+	eng := Engine{}
+	sess, err := eng.Open(context.Background(), engine.ConnConfig{URI: "file::memory:?cache=private"})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s := sess.(*Session)
+	t.Cleanup(func() { s.Close(context.Background()) })
+
+	mustExec(t, s, `CREATE TABLE users (id INTEGER PRIMARY KEY)`)
+	mustExec(t, s, `CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, FOREIGN KEY(user_id) REFERENCES users(id))`)
+
+	if _, err := s.Execute(context.Background(), "main", `INSERT INTO orders (id, user_id) VALUES (1, 999)`); err == nil {
+		t.Fatal("expected an error inserting a row with a non-existent user_id, foreign key enforcement doesn't appear to be enabled")
+	}
+}
+
 func TestSQLiteListNamespacesAndSchema(t *testing.T) {
 	s := openTestSession(t)
 	mustExec(t, s, `CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL)`)
