@@ -275,35 +275,62 @@ func (s *Session) Explain(ctx context.Context, database, sqlText string) (string
 func (s *Session) ListTableIndexes(ctx context.Context, database, table string) ([]engine.IndexDef, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
+	// One row per index column, ordered so each index's columns arrive
+	// consecutively and in declared order — grouped in Go below rather
+	// than via GROUP_CONCAT/strings.Split, which broke on a column name
+	// containing a literal comma (legal in a backtick-quoted MySQL
+	// identifier): concatenating column names with a "," separator and
+	// splitting on "," can't tell a real separator from a comma inside a
+	// name, silently turning one indexed column into two fake ones.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT index_name, MAX(non_unique) = 0 AS is_unique, GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') AS cols
+		SELECT index_name, non_unique = 0 AS is_unique, column_name
 		FROM information_schema.statistics
 		WHERE table_schema = ? AND table_name = ? AND index_name != 'PRIMARY'
-		GROUP BY index_name
-		ORDER BY index_name`, database, table)
+		ORDER BY index_name, seq_in_index`, database, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []engine.IndexDef{}
+
+	type index struct {
+		unique bool
+		cols   []string
+	}
+	var order []string
+	byName := map[string]*index{}
 	for rows.Next() {
-		var name, cols string
+		var name, col string
 		var unique bool
-		if err := rows.Scan(&name, &unique, &cols); err != nil {
+		if err := rows.Scan(&name, &unique, &col); err != nil {
 			return nil, err
 		}
-		colList := strings.Split(cols, ",")
-		for i, c := range colList {
+		ix, ok := byName[name]
+		if !ok {
+			ix = &index{unique: unique}
+			byName[name] = ix
+			order = append(order, name)
+		}
+		ix.cols = append(ix.cols, col)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := []engine.IndexDef{}
+	for _, name := range order {
+		ix := byName[name]
+		colList := make([]string, len(ix.cols))
+		for i, c := range ix.cols {
 			colList[i] = quoteIdent(c)
 		}
 		kind := "INDEX"
-		if unique {
+		if ix.unique {
 			kind = "UNIQUE INDEX"
 		}
 		ddl := fmt.Sprintf("CREATE %s %s ON %s (%s)", kind, quoteIdent(name), quoteIdent(table), strings.Join(colList, ", "))
 		out = append(out, engine.IndexDef{Name: name, DDL: ddl})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // BeginConsistentRead opens a REPEATABLE READ, read-only transaction —
