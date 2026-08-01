@@ -101,9 +101,16 @@ func GenerateMigration(diffs []TableDiff, dialect string) Migration {
 func renderCreateTable(d TableDiff, dialect string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", quoteIdent(dialect, d.Table))
-	defs := make([]string, 0, len(d.Columns))
+	defs := make([]string, 0, len(d.Columns)+1)
 	for _, c := range d.Columns {
 		defs = append(defs, "  "+fmtColumnDef(*c.After, dialect))
+	}
+	if len(d.PrimaryKey) > 0 {
+		quoted := make([]string, len(d.PrimaryKey))
+		for i, col := range d.PrimaryKey {
+			quoted[i] = quoteIdent(dialect, col)
+		}
+		defs = append(defs, "  PRIMARY KEY ("+strings.Join(quoted, ", ")+")")
 	}
 	sb.WriteString(strings.Join(defs, ",\n"))
 	sb.WriteString("\n);\n\n")

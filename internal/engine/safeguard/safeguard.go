@@ -37,7 +37,19 @@ var (
 	leadingCommentRe = regexp.MustCompile(`(?s)^(\s*(--[^\n]*\n|/\*.*?\*/))*\s*`)
 	whereRe          = regexp.MustCompile(`(?i)\bwhere\b`)
 	firstWordRe      = regexp.MustCompile(`(?i)^([a-zA-Z]+)`)
+	// Matches a single-quoted SQL string literal, including an escaped ''
+	// quote inside it, so a keyword-shaped word appearing only inside
+	// quoted data (e.g. WHERE name = 'INSERT') isn't mistaken for a real
+	// SQL keyword when scanning for a statement's verb or WHERE clause.
+	stringLiteralRe = regexp.MustCompile(`'([^']|'')*'`)
 )
+
+// stripStringLiterals blanks the contents of every single-quoted string
+// literal in s, so a subsequent keyword-scanning regex can't be fooled by
+// verb- or clause-shaped text that only appears inside quoted data.
+func stripStringLiterals(s string) string {
+	return stringLiteralRe.ReplaceAllString(s, "''")
+}
 
 // riskRank orders Risk from least to most severe, so scanning multiple
 // statements can keep "the worst one seen so far."
@@ -92,17 +104,24 @@ func classifyOne(sqlText string) Classification {
 	verb := firstWordRe.FindString(upper)
 
 	switch verb {
+	case "":
+		// firstWordRe is anchored at the start, so a statement beginning
+		// with anything other than a letter makes it match nothing at
+		// all. We can't identify what's actually about to run in that
+		// case, so treat it as dangerous rather than silently falling
+		// through to RiskNone — the opposite of "unrecognized means safe."
+		return Classification{Risk: RiskDangerous, Reason: "statement doesn't start with a recognizable SQL keyword; treating it as potentially dangerous"}
 	case "DROP", "TRUNCATE":
 		return Classification{Risk: RiskDangerous, Reason: verb + " removes an entire object; this cannot be undone"}
 	case "ALTER":
 		return Classification{Risk: RiskDangerous, Reason: "ALTER changes schema and may be irreversible"}
 	case "DELETE":
-		if !whereRe.MatchString(stripped) {
+		if !whereRe.MatchString(stripStringLiterals(stripped)) {
 			return Classification{Risk: RiskDangerous, Reason: "DELETE with no WHERE clause removes every row"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: "DELETE removes rows"}
 	case "UPDATE":
-		if !whereRe.MatchString(stripped) {
+		if !whereRe.MatchString(stripStringLiterals(stripped)) {
 			return Classification{Risk: RiskDangerous, Reason: "UPDATE with no WHERE clause modifies every row"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: "UPDATE modifies rows"}
@@ -253,7 +272,13 @@ func StripExplainAnalyze(sqlText string) string {
 var finalVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER)\b`)
 
 func classifyWithCTE(upper string) Classification {
-	matches := finalVerbRe.FindAllString(upper, -1)
+	// Ignore verb- and clause-shaped words that only appear inside a
+	// quoted string literal (e.g. "... WHERE name = 'INSERT'") — otherwise
+	// "last match wins" over the raw text can be spoofed by a later
+	// keyword-shaped word found only inside quoted data, masking a real
+	// DML verb that appeared earlier, outside quotes.
+	noLiterals := stripStringLiterals(upper)
+	matches := finalVerbRe.FindAllString(noLiterals, -1)
 	if len(matches) == 0 {
 		return Classification{Risk: RiskNone}
 	}
@@ -262,7 +287,7 @@ func classifyWithCTE(upper string) Classification {
 	case "DROP", "TRUNCATE", "ALTER":
 		return Classification{Risk: RiskDangerous, Reason: last + " inside a WITH statement"}
 	case "DELETE", "UPDATE":
-		if !whereRe.MatchString(upper) {
+		if !whereRe.MatchString(noLiterals) {
 			return Classification{Risk: RiskDangerous, Reason: last + " with no WHERE clause inside a WITH statement"}
 		}
 		return Classification{Risk: RiskConfirm, Reason: last + " inside a WITH statement"}

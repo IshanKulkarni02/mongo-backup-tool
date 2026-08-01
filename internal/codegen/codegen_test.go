@@ -291,3 +291,56 @@ func TestPythonIdentifierSanitizesInvalidNames(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyGeometricTypesAreNotInteger covers issue #28: Postgres' point
+// type and MySQL/PostGIS multipoint contain "INT" as a bare substring
+// (poINT, multipoINT) and must not be classified as classInteger.
+func TestClassifyGeometricTypesAreNotInteger(t *testing.T) {
+	cases := []string{"point", "POINT", "multipoint", "MultiPoint", "linestring", "polygon"}
+	for _, dt := range cases {
+		if got := classify(dt); got == classInteger {
+			t.Errorf("classify(%q) = classInteger, want anything else", dt)
+		}
+	}
+}
+
+// TestClassifyIntegerTypesStillMatch guards against the fix above
+// overcorrecting: real integer types, including ones with a length
+// modifier or UNSIGNED suffix, must still classify as classInteger.
+func TestClassifyIntegerTypesStillMatch(t *testing.T) {
+	cases := []string{
+		"INT", "int", "INTEGER", "INT2", "INT4", "INT8",
+		"TINYINT", "SMALLINT", "MEDIUMINT", "BIGINT",
+		"SERIAL", "SMALLSERIAL", "BIGSERIAL",
+		"INT(11)", "INT UNSIGNED", "INT(11) UNSIGNED", "BIGINT(20)",
+	}
+	for _, dt := range cases {
+		if got := classify(dt); got != classInteger {
+			t.Errorf("classify(%q) = %v, want classInteger", dt, got)
+		}
+	}
+}
+
+// TestClassifyIntervalIsNotInteger covers the same substring hazard for
+// Postgres' INTERVAL type, which also contains "INT".
+func TestClassifyIntervalIsNotInteger(t *testing.T) {
+	if got := classify("INTERVAL"); got == classInteger {
+		t.Errorf("classify(%q) = classInteger, want anything else", "INTERVAL")
+	}
+}
+
+func TestBaseTypeName(t *testing.T) {
+	cases := map[string]string{
+		"INT":          "INT",
+		"INT(11)":      "INT",
+		"INT UNSIGNED": "INT",
+		"VARCHAR(255)": "VARCHAR",
+		"POINT":        "POINT",
+		"":             "",
+	}
+	for in, want := range cases {
+		if got := baseTypeName(in); got != want {
+			t.Errorf("baseTypeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

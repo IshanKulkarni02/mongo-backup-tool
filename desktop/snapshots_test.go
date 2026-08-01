@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/sqlite"
 	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
@@ -146,5 +150,56 @@ func TestRestoreSnapshotDispatchesToSQLForSQLiteConnection(t *testing.T) {
 	}
 	if len(res.Rows) != 1 || res.Rows[0]["email"].Display != "original@example.com" {
 		t.Fatalf("expected the restored email to be the original, got %+v", res.Rows)
+	}
+}
+
+// TestDiffSnapshotsAgainstLiveDatabaseDoesNotPanic guards against #14:
+// DiffSnapshots dereferenced to.ID before checking whether live != nil, so
+// the documented "diff against the live database" path (toID == "", which
+// openDiffScope always returns as to == nil, live != nil) panicked with a
+// nil pointer dereference instead of performing the diff.
+func TestDiffSnapshotsAgainstLiveDatabaseDoesNotPanic(t *testing.T) {
+	a, uri := newTestAppWithMongoConn(t, "diff-live-test", false)
+
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Disconnect(context.Background())
+	coll := client.Database("diffdb").Collection("widgets")
+	if _, err := coll.InsertOne(context.Background(), bson.M{"n": 1}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	jobID, err := a.CreateSnapshot("diff-live-test", "diffdb", "before change")
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	job := waitForJob(t, a, jobID)
+	if job.Status != JobDone {
+		t.Fatalf("expected create job to succeed, got status=%s message=%s", job.Status, job.Message)
+	}
+	snapID := job.Result.(*snapshot.CreateResult).Summary.ID
+
+	// Change the live database after the snapshot, so the diff has
+	// something real to report.
+	if _, err := coll.InsertOne(context.Background(), bson.M{"n": 2}); err != nil {
+		t.Fatalf("second insert: %v", err)
+	}
+
+	result, err := a.DiffSnapshots("diff-live-test", "diffdb", snapID, "")
+	if err != nil {
+		t.Fatalf("DiffSnapshots against live database: %v", err)
+	}
+	if len(result.Collections) != 1 || result.Collections[0].AddedCount != 1 {
+		t.Fatalf("expected 1 added doc in widgets, got %+v", result.Collections)
+	}
+
+	page, err := a.DiffCollectionChanges("diff-live-test", "diffdb", snapID, "", "widgets", "added", 0, 10)
+	if err != nil {
+		t.Fatalf("DiffCollectionChanges against live database: %v", err)
+	}
+	if page.Total != 1 || len(page.IDs) != 1 {
+		t.Fatalf("expected 1 added id in widgets, got %+v", page)
 	}
 }
