@@ -96,7 +96,16 @@ func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, 
 		// The variable name still can't be parameterized (SQL doesn't
 		// allow parameterized identifiers), but it's now validated above;
 		// the value is always sent as a query argument.
-		if _, err := db.ExecContext(pingCtx, "SET @"+cfg.TenantSessionVar+" = ?", cfg.TenantValue); err != nil {
+		//
+		// A fresh timeout, not the ping-bounded pingCtx: on a slow
+		// connection, PingContext may have already consumed most of
+		// connectTimeout, leaving this statement too little budget and
+		// causing a spurious "context deadline exceeded" even though the
+		// connection itself is healthy.
+		setCtx, setCancel := context.WithTimeout(ctx, connectTimeout)
+		_, err := db.ExecContext(setCtx, "SET @"+cfg.TenantSessionVar+" = ?", cfg.TenantValue)
+		setCancel()
+		if err != nil {
 			db.Close()
 			if tun != nil {
 				tun.Close()
