@@ -168,6 +168,11 @@ export function ConnectionsView({
                 {result === "error" && (
                   <div className="conn-dbs conn-dbs-error">
                     {mode === "beginner" ? "Couldn't connect — check the details and try again" : "Connection failed"}
+                    {mode === "beginner" && (
+                      <button type="button" className="conn-retry-link" onClick={() => handleTest(c.name)}>
+                        Try again
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
