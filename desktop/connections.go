@@ -192,7 +192,14 @@ func (a *App) SwitchTenant(connectionName, tenantValue string) error {
 	return nil
 }
 
-// TestConnection pings a saved connection and returns its database names.
+// TestConnection pings a saved connection and returns the names the
+// database/schema picker should offer. For most engines that's
+// ListDatabases' real database names; for an engine.SchemaLister (Postgres,
+// whose SQLSession "database" parameter actually means schema within the
+// DSN's fixed database — see internal/engine/postgres's package doc
+// comment) it's ListSchemas instead, since none of ListDatabases' real
+// sibling database names would ever match a schema and table browsing
+// would silently come up empty.
 func (a *App) TestConnection(name string) ([]string, error) {
 	sess, release, err := a.engines.Acquire(context.Background(), name)
 	if err != nil {
@@ -204,7 +211,19 @@ func (a *App) TestConnection(name string) ([]string, error) {
 		a.engines.Invalidate(name)
 		return nil, err
 	}
-	return sess.ListDatabases(context.Background())
+	return testConnectionNames(context.Background(), sess)
+}
+
+// testConnectionNames picks what TestConnection returns for an
+// already-pinged sess: an engine.SchemaLister's ListSchemas if the engine
+// implements it, otherwise the base ListDatabases. Split out from
+// TestConnection so the dispatch itself is testable against a fake Session
+// without a live database connection.
+func testConnectionNames(ctx context.Context, sess engine.Session) ([]string, error) {
+	if sl, ok := sess.(engine.SchemaLister); ok {
+		return sl.ListSchemas(ctx)
+	}
+	return sess.ListDatabases(ctx)
 }
 
 // requireWritable returns engine.ErrReadOnly if the named connection is

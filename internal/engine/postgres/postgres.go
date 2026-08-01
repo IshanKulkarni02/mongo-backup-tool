@@ -135,6 +135,35 @@ func (s *Session) ListDatabases(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// ListSchemas returns every user schema in the database the DSN already
+// connected to (Postgres has no cross-database queries). This is what
+// populates the frontend's Postgres schema picker — ListDatabases
+// deliberately keeps returning real sibling database names for whatever
+// else needs those, since ListNamespaces/TableSchema/Query's "database"
+// parameter means schema here, not a pg_database entry (see the package
+// doc comment).
+func (s *Session) ListSchemas(ctx context.Context) ([]string, error) {
+	ctx, cancel := opCtx(ctx)
+	defer cancel()
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT nspname FROM pg_namespace
+		WHERE nspname NOT IN ('pg_catalog', 'information_schema') AND nspname NOT LIKE 'pg_%'
+		ORDER BY nspname`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
 func schemaOrPublic(schema string) string {
 	if schema == "" {
 		return "public"
