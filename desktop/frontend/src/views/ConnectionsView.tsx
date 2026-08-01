@@ -379,6 +379,16 @@ function GuidedAddConnectionModal({ onClose, onAdded }: { onClose: () => void; o
       setError(engine === "sqlite" ? "Choose a database file" : "At least the address (host) is required");
       return;
     }
+    // Postgres/MySQL always connect to one specific database, unlike Mongo
+    // (where an empty path just means "server default") — an empty dbName
+    // here would build a URI with a blank db segment and surface a raw
+    // backend connection error, exactly what this guided flow exists to
+    // avoid. The "Database name" field label below only marks itself
+    // "(optional)" for mongodb, so this matches what the label promises.
+    if ((engine === "postgres" || engine === "mysql") && !dbName) {
+      setError("Database name is required");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
