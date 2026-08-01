@@ -27,6 +27,20 @@ func transactionalDDL(dialect string) bool {
 	}
 }
 
+// quoteIdent quotes a table/column name for dialect, mirroring the
+// quoteIdent each engine package (internal/engine/postgres,
+// internal/engine/mysql) and internal/snapshot/restore_sql.go's
+// quoteIdentSQL already implement for the same purpose — table/column
+// names come verbatim from live DB introspection, and an ordinary schema
+// using a reserved word (order, group, user, select) as a name would
+// otherwise produce syntactically invalid generated DDL.
+func quoteIdent(dialect, name string) string {
+	if dialect == "mysql" {
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	}
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 // GenerateMigration renders diffs as a SQL script for the given dialect.
 // Column type/nullability changes are never auto-generated as an ALTER
 // COLUMN statement — the syntax and safety of changing a column's type
@@ -51,19 +65,19 @@ func GenerateMigration(diffs []TableDiff, dialect string) Migration {
 		switch d.Change {
 		case TableAdded:
 			any = true
-			sql.WriteString(renderCreateTable(d))
+			sql.WriteString(renderCreateTable(d, dialect))
 		case TableRemoved:
 			any = true
-			fmt.Fprintf(&sql, "DROP TABLE %s;\n\n", d.Table)
+			fmt.Fprintf(&sql, "DROP TABLE %s;\n\n", quoteIdent(dialect, d.Table))
 		case TableModified:
 			for _, c := range d.Columns {
 				switch c.Change {
 				case ColumnAdded:
 					any = true
-					fmt.Fprintf(&sql, "ALTER TABLE %s ADD COLUMN %s;\n", d.Table, fmtColumnDef(*c.After))
+					fmt.Fprintf(&sql, "ALTER TABLE %s ADD COLUMN %s;\n", quoteIdent(dialect, d.Table), fmtColumnDef(*c.After, dialect))
 				case ColumnRemoved:
 					any = true
-					fmt.Fprintf(&sql, "ALTER TABLE %s DROP COLUMN %s;\n", d.Table, c.Name)
+					fmt.Fprintf(&sql, "ALTER TABLE %s DROP COLUMN %s;\n", quoteIdent(dialect, d.Table), quoteIdent(dialect, c.Name))
 				case ColumnModified:
 					any = true
 					fmt.Fprintf(&sql, "-- MANUAL REVIEW: %s.%s changed from %q to %q — auto-generating an ALTER COLUMN isn't safe across dialects\n",
@@ -84,15 +98,19 @@ func GenerateMigration(diffs []TableDiff, dialect string) Migration {
 	return Migration{SQL: sql.String(), Warnings: warnings}
 }
 
-func renderCreateTable(d TableDiff) string {
+func renderCreateTable(d TableDiff, dialect string) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", d.Table)
+	fmt.Fprintf(&sb, "CREATE TABLE %s (\n", quoteIdent(dialect, d.Table))
 	defs := make([]string, 0, len(d.Columns)+1)
 	for _, c := range d.Columns {
-		defs = append(defs, "  "+fmtColumnDef(*c.After))
+		defs = append(defs, "  "+fmtColumnDef(*c.After, dialect))
 	}
 	if len(d.PrimaryKey) > 0 {
-		defs = append(defs, "  PRIMARY KEY ("+strings.Join(d.PrimaryKey, ", ")+")")
+		quoted := make([]string, len(d.PrimaryKey))
+		for i, col := range d.PrimaryKey {
+			quoted[i] = quoteIdent(dialect, col)
+		}
+		defs = append(defs, "  PRIMARY KEY ("+strings.Join(quoted, ", ")+")")
 	}
 	sb.WriteString(strings.Join(defs, ",\n"))
 	sb.WriteString("\n);\n\n")

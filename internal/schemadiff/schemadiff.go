@@ -183,13 +183,17 @@ func HasChanges(diffs []TableDiff) bool {
 }
 
 // fmtColumnDef renders one column as it would appear in a CREATE TABLE.
-// Primary keys are deliberately never rendered inline here — renderCreateTable
+// The column name is quoted for dialect (see quoteIdent in migration.go) —
+// it comes verbatim from live DB introspection, and an ordinary schema
+// using a reserved word (order, group, user, select) as a column name
+// would otherwise produce syntactically invalid generated DDL. Primary
+// keys are deliberately never rendered inline here — renderCreateTable
 // emits them as a single table-level PRIMARY KEY (...) constraint instead
 // (see TableDiff.PrimaryKey), since a per-column PRIMARY KEY clause is
 // invalid DDL for a composite key (both Postgres and MySQL reject more
 // than one inline PRIMARY KEY column).
-func fmtColumnDef(c engine.Column) string {
-	def := fmt.Sprintf("%s %s", c.Name, c.DataType)
+func fmtColumnDef(c engine.Column, dialect string) string {
+	def := fmt.Sprintf("%s %s", quoteIdent(dialect, c.Name), c.DataType)
 	if !c.Nullable {
 		def += " NOT NULL"
 	}
