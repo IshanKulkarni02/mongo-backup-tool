@@ -539,18 +539,34 @@ function ImportCSVModal({
     setPath(p);
     setError("");
     try {
+      // Read regardless of hasHeaderRow: with no header, this first row is
+      // still needed as a preview to know how many CSV columns there are.
       const h = await ReadCSVHeader(p);
       setHeader(h);
       const nextMapping: Record<string, string> = {};
-      for (const col of schema?.columns ?? []) {
-        const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
-        if (match) nextMapping[col.name] = match;
+      if (hasHeaderRow) {
+        for (const col of schema?.columns ?? []) {
+          const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
+          if (match) nextMapping[col.name] = match;
+        }
       }
       setMapping(nextMapping);
     } catch (e) {
       setError(String(e));
     }
   }
+
+  // With no header row, there's no header text to map against — the
+  // mapping value sent to ImportCSV is instead the CSV column's 0-based
+  // positional index (as a string), matching ImportCSV's contract.
+  function toggleHasHeaderRow(v: boolean) {
+    setHasHeaderRow(v);
+    setMapping({});
+  }
+
+  const csvColumnOptions = hasHeaderRow
+    ? header.map((h) => ({ value: h, label: h }))
+    : header.map((_, i) => ({ value: String(i), label: `Column ${i + 1} (e.g. "${header[i]}")` }));
 
   async function submit() {
     if (Object.keys(mapping).length === 0) {
@@ -595,13 +611,13 @@ function ImportCSVModal({
       {path && (
         <div className="field">
           <label className="field-label">
-            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => setHasHeaderRow(e.target.checked)} /> First row is a
+            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => toggleHasHeaderRow(e.target.checked)} /> First row is a
             header
           </label>
         </div>
       )}
       {path && !hasHeaderRow && (
-        <div className="query-error">Uncheck only if the file has no header row — column mapping needs header names to match against.</div>
+        <div className="field-hint">No header row: map each table column to a CSV position below (every row, including the first, is imported as data).</div>
       )}
       {path && header.length > 0 && (
         <div className="field">
@@ -615,7 +631,7 @@ function ImportCSVModal({
                   value={mapping[c.name] ?? ""}
                   onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
                   placeholder="(skip)"
-                  options={header.map((h) => ({ value: h, label: h }))}
+                  options={csvColumnOptions}
                 />
               </div>
             ))}
