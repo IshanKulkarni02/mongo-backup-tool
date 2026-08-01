@@ -76,7 +76,16 @@ func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, 
 		// spliced into the statement), and the value is fully
 		// parameterized — safer than a "SET x = y" string built with
 		// fmt.Sprintf.
-		if _, err := db.ExecContext(pingCtx, "SELECT set_config($1, $2, false)", cfg.TenantSessionVar, cfg.TenantValue); err != nil {
+		//
+		// A fresh timeout, not the ping-bounded pingCtx: on a slow
+		// connection, PingContext may have already consumed most of
+		// connectTimeout, leaving this statement too little budget and
+		// causing a spurious "context deadline exceeded" even though the
+		// connection itself is healthy.
+		setCtx, setCancel := context.WithTimeout(ctx, connectTimeout)
+		_, err := db.ExecContext(setCtx, "SELECT set_config($1, $2, false)", cfg.TenantSessionVar, cfg.TenantValue)
+		setCancel()
+		if err != nil {
 			db.Close()
 			if tun != nil {
 				tun.Close()

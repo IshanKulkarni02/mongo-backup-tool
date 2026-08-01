@@ -194,3 +194,29 @@ func TestIntegrationMySQLBeginConsistentReadStreamsAllRowsIncludingBinary(t *tes
 		t.Fatal("expected a row's BLOB column to round-trip as real []byte matching the inserted blob")
 	}
 }
+
+// TestIntegrationMySQLTenantSessionVar is the regression test for #7: the
+// tenant-session-var SET statement in Open() must succeed even though it
+// now runs on a fresh timeout instead of the ping-bounded one.
+func TestIntegrationMySQLTenantSessionVar(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess, err := (Engine{}).Open(ctx, engine.ConnConfig{
+		URI:              testURI(),
+		TenantSessionVar: "current_tenant",
+		TenantValue:      "acme",
+	})
+	if err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+	defer sess.Close(context.Background())
+
+	sqlSess := sess.(engine.SQLSession)
+	result, err := sqlSess.Query(context.Background(), "dbhelm_test", `SELECT @current_tenant AS tenant`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0]["tenant"].Display != "acme" {
+		t.Fatalf("expected tenant session var to be set to 'acme', got %+v", result.Rows)
+	}
+}
