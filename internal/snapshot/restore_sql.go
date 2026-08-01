@@ -389,9 +389,21 @@ func recreateSQLIndexes(ctx context.Context, sess engine.SQLSession, database st
 	return nil
 }
 
+// isAlreadyExistsError reports whether err is the specific "this index
+// already exists" case (tolerated by recreateSQLIndexes), as opposed to a
+// genuinely different failure that happens to also mention "duplicate" —
+// most importantly a unique-index CREATE failing because existing row
+// data violates the new constraint: MySQL's "Duplicate entry 'x' for key
+// 'y'" (error 1062) or Postgres's "...Key (col)=(x) is duplicated."
+// (SQLSTATE 23505), neither of which contain "already exists" or MySQL's
+// specific already-exists phrase "duplicate key name" (error 1061,
+// "Duplicate key name 'y'"). A previous blanket strings.Contains(msg,
+// "duplicate") also matched those data-violation errors and silently
+// swallowed them, so the index was never recreated and the underlying
+// duplicate-data problem was hidden from the user.
 func isAlreadyExistsError(err error) bool {
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate key name") || strings.Contains(msg, "duplicate")
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate key name")
 }
 
 func quoteIdentSQL(engineID, name string) string {
