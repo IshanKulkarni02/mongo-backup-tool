@@ -5,6 +5,47 @@ import (
 	"testing"
 )
 
+// TestSQLStringLiteral guards against #16: MySQL treats \ as an escape
+// character inside a single-quoted string literal by default, so a
+// literal backslash in the value must itself be doubled there — but
+// Postgres and SQLite treat \ as an ordinary character in a plain '...'
+// literal, so escaping it for them would be incorrect, not just
+// unnecessary.
+func TestSQLStringLiteral(t *testing.T) {
+	cases := []struct {
+		name     string
+		engineID string
+		in       string
+		want     string
+	}{
+		{"mysql backslash", "mysql", `C:\temp\new`, `'C:\\temp\\new'`},
+		{"mysql single quote", "mysql", `it's`, `'it''s'`},
+		{"mysql backslash and quote", "mysql", `a\b'c`, `'a\\b''c'`},
+		{"mysql odd trailing backslash", "mysql", `a\`, `'a\\'`},
+		{"postgres backslash left alone", "postgres", `C:\temp\new`, `'C:\temp\new'`},
+		{"postgres single quote", "postgres", `it's`, `'it''s'`},
+		{"sqlite backslash left alone", "sqlite", `C:\temp\new`, `'C:\temp\new'`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sqlStringLiteral(c.engineID, c.in); got != c.want {
+				t.Errorf("sqlStringLiteral(%q, %q) = %q, want %q", c.engineID, c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestSQLLiteralForRestoreEscapesMySQLBackslash confirms
+// sqlLiteralForRestore's string-value path actually reaches
+// sqlStringLiteral's MySQL escaping, not just the helper in isolation.
+func TestSQLLiteralForRestoreEscapesMySQLBackslash(t *testing.T) {
+	got := sqlLiteralForRestore("mysql", `C:\temp\new`, false)
+	want := `'C:\\temp\\new'`
+	if got != want {
+		t.Errorf("sqlLiteralForRestore(mysql, ...) = %q, want %q", got, want)
+	}
+}
+
 // TestIsBinaryDataType guards against #15: information_schema.columns.
 // data_type is reported lowercase for both Postgres ("bytea") and MySQL
 // ("blob"/"binary"/"varbinary") — only the SQLite test schema happens to

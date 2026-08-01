@@ -315,13 +315,30 @@ func sqlLiteralForRestore(engineID string, value any, isBinary bool) string {
 		}
 		return "FALSE"
 	case string:
-		return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		return sqlStringLiteral(engineID, v)
 	default:
 		// Shouldn't happen for a scalar SQL column value, but fail safe
 		// rather than panic on an unexpected shape.
 		b, _ := json.Marshal(v)
-		return "'" + strings.ReplaceAll(string(b), "'", "''") + "'"
+		return sqlStringLiteral(engineID, string(b))
 	}
+}
+
+// sqlStringLiteral renders s as a single-quoted SQL string literal in
+// engineID's own escaping rules. MySQL treats \ as an escape character
+// inside a single-quoted literal by default (no NO_BACKSLASH_ESCAPES mode
+// is set anywhere in internal/engine/mysql), so a literal backslash must
+// itself be doubled there — otherwise a value like a Windows path
+// (C:\temp\new) gets reinterpreted (\t becomes a tab), or an odd trailing
+// backslash count unbalances the generated statement's quoting entirely.
+// Postgres (standard_conforming_strings, the default since 9.1) and
+// SQLite both treat \ as an ordinary character in a plain '...' literal,
+// so escaping it there would be incorrect, not just unnecessary.
+func sqlStringLiteral(engineID, s string) string {
+	if engineID == "mysql" {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+	}
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // hexBinaryLiteral renders hexStr as a binary literal in engineID's own
