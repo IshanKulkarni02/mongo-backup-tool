@@ -109,16 +109,25 @@ export function SchemaDiffView() {
   // to show the stale A-vs-B result).
   const [diffedPair, setDiffedPair] = useState<DiffedPair | null>(null);
   const toast = useToast();
+  const startDiffRequest = useStaleGuard();
 
   useEffect(() => {
     ListConnections().then((conns) => setConnections(conns.filter((c) => c.capabilities?.sql)));
   }, []);
 
   function clearDiffState() {
+    // Invalidate any in-flight runDiff so its response, once it resolves,
+    // can't resurrect diffs/diffedPair for a pair the user has already
+    // moved away from — see runDiff's isStale checks below. Also clear
+    // loading immediately rather than waiting for that now-abandoned
+    // request's own (staleness-skipped) finally block, which would
+    // otherwise never run if the user doesn't start a fresh diff.
+    startDiffRequest();
     setDiffs(null);
     setMigration(null);
     setDiffedPair(null);
     setError("");
+    setLoading(false);
   }
 
   function updateConnA(v: string) {
@@ -140,19 +149,23 @@ export function SchemaDiffView() {
 
   async function runDiff() {
     if (!connA || !dbA || !connB || !dbB) return;
+    const isStale = startDiffRequest();
+    const pair = { connA, dbA, connB, dbB };
     setLoading(true);
     setError("");
     setMigration(null);
     try {
       const result = await DiffSchemas(connA, dbA, connB, dbB);
+      if (isStale()) return;
       setDiffs(result);
-      setDiffedPair({ connA, dbA, connB, dbB });
+      setDiffedPair(pair);
     } catch (e) {
+      if (isStale()) return;
       setError(String(e));
       setDiffs(null);
       setDiffedPair(null);
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }
 
