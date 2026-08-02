@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,49 @@ func TestIntegrationMySQLCompositePrimaryKeyAndIndexes(t *testing.T) {
 	}
 	if len(indexes) != 1 || indexes[0].Name != "it_membership_role_idx" {
 		t.Fatalf("expected exactly the explicit role index (PRIMARY excluded), got %+v", indexes)
+	}
+}
+
+// TestIntegrationMySQLIndexColumnNameContainingComma guards against #27:
+// ListTableIndexes used to join column names server-side with
+// GROUP_CONCAT(... SEPARATOR ',') and split them back apart client-side
+// with strings.Split(cols, ","). A backtick-quoted MySQL identifier may
+// legally contain a comma, so indexing a column literally named "a,b"
+// produced the concatenated string "a,b", which strings.Split turned into
+// two fake columns ["a", "b"] — a malformed CREATE INDEX referencing a
+// column that doesn't exist. Grouping the rows in Go instead (one row per
+// index column) never joins/splits through a separator, so this must
+// still report exactly one index with its one real column.
+func TestIntegrationMySQLIndexColumnNameContainingComma(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const db = "dbhelm_test"
+
+	mustExec(t, s, db, "DROP TABLE IF EXISTS it_comma_col")
+	t.Cleanup(func() { mustExec(t, s, db, "DROP TABLE IF EXISTS it_comma_col") })
+
+	mustExec(t, s, db, "CREATE TABLE it_comma_col (id INT AUTO_INCREMENT PRIMARY KEY, `a,b` VARCHAR(50))")
+	mustExec(t, s, db, "CREATE INDEX it_comma_col_idx ON it_comma_col (`a,b`)")
+
+	indexes, err := s.ListTableIndexes(ctx, db, "it_comma_col")
+	if err != nil {
+		t.Fatalf("ListTableIndexes: %v", err)
+	}
+	if len(indexes) != 1 {
+		t.Fatalf("expected exactly 1 index, got %d: %+v", len(indexes), indexes)
+	}
+	idx := indexes[0]
+	if idx.Name != "it_comma_col_idx" {
+		t.Fatalf("unexpected index name: %q", idx.Name)
+	}
+	if !strings.Contains(idx.DDL, "`a,b`") {
+		t.Fatalf("expected DDL to reference the single column `a,b`, got: %s", idx.DDL)
+	}
+	// 3 quoted identifiers (index name, table name, the one column) = 6
+	// backticks; a split-on-comma bug would add a spurious 4th
+	// identifier (2 more backticks) for the fake second column.
+	if n := strings.Count(idx.DDL, "`"); n != 6 {
+		t.Fatalf("expected exactly 3 quoted identifiers (6 backticks) in DDL, got %d: %s", n, idx.DDL)
 	}
 }
 
