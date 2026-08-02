@@ -19,6 +19,32 @@ export function JsonTree({ json }: { json: string }) {
   );
 }
 
+// formatDateValue converts a $date value to a readable ISO timestamp.
+// The relaxed Extended JSON form is already a plain ISO date string
+// (e.g. "2023-11-14T22:13:20Z") — nothing to convert there. The
+// canonical form (what `mongoexport --jsonFormat=canonical` and
+// `EJSON.stringify(doc, {relaxed:false})` produce) wraps the millisecond
+// epoch in a $numberLong, e.g. {"$date": {"$numberLong":
+// "1700000000000"}} — without unwrapping that, the raw large integer was
+// shown instead of a date. A bare number form is handled the same way
+// defensively, in case some producer emits {"$date": 1700000000000}
+// unwrapped. new Date(NaN).toISOString() throws, so an unparseable value
+// falls back to its plain string form rather than crashing the tree.
+function formatDateValue(v: unknown): string {
+  let ms: number | undefined;
+  if (typeof v === "object" && v !== null && "$numberLong" in v) {
+    const n = Number((v as Record<string, unknown>)["$numberLong"]);
+    if (Number.isFinite(n)) ms = n;
+  } else if (typeof v === "number" && Number.isFinite(v)) {
+    ms = v;
+  }
+  if (ms !== undefined) {
+    const d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return String(v);
+}
+
 function extJSONBadge(value: unknown): { label: string; text: string } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const obj = value as Record<string, unknown>;
@@ -32,11 +58,8 @@ function extJSONBadge(value: unknown): { label: string; text: string } | null {
       return { label: "Long", text: String(obj[k]) };
     case "$numberDecimal":
       return { label: "Decimal128", text: String(obj[k]) };
-    case "$date": {
-      const v = obj[k];
-      const text = typeof v === "object" && v !== null ? String((v as Record<string, unknown>)["$numberLong"]) : String(v);
-      return { label: "Date", text };
-    }
+    case "$date":
+      return { label: "Date", text: formatDateValue(obj[k]) };
     case "$binary":
       return { label: "Binary", text: "<binary data>" };
     default:

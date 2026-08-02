@@ -21,15 +21,25 @@ export function DependencyModal({ onResolved }: { onResolved: () => void }) {
   const [instructions, setInstructions] = useState<string[]>([]);
   const [installLog, setInstallLog] = useState<string[]>([]);
   const [installJobID, setInstallJobID] = useState<string | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const check = useCallback(() => {
-    Promise.all([CheckDependencies(), AutoInstallAvailable()]).then(([deps, auto]) => {
-      setStatuses(deps);
-      setAutoAvailable(auto);
-      if (deps.every((d) => d.installed)) {
-        onResolved();
-      }
-    });
+    setCheckError(null);
+    Promise.all([CheckDependencies(), AutoInstallAvailable()])
+      .then(([deps, auto]) => {
+        setStatuses(deps);
+        setAutoAvailable(auto);
+        if (deps.every((d) => d.installed)) {
+          onResolved();
+        }
+      })
+      .catch((e) => {
+        // Without this, statuses stayed null forever on failure — since
+        // the component returns null while statuses === null, the whole
+        // modal silently disappeared with no error and onResolved never
+        // invoked.
+        setCheckError(String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -57,13 +67,47 @@ export function DependencyModal({ onResolved }: { onResolved: () => void }) {
   async function startAutoInstall() {
     setChoice("installing");
     setInstallLog(["Installing..."]);
-    const id = await InstallDependencies();
-    setInstallJobID(id);
+    try {
+      const id = await InstallDependencies();
+      setInstallJobID(id);
+    } catch (e) {
+      // Mirrors onJobUpdate's "failed" branch above, extended to cover a
+      // rejection before the install job even starts — without this,
+      // choice stayed stuck on "installing" forever with no error shown.
+      setInstallLog((prev) => [...prev, "Failed: " + String(e)]);
+      setChoice("manual");
+      try {
+        setInstructions(await ManualInstallInstructions());
+      } catch {
+        // Best-effort fallback UI; leave instructions empty if even this
+        // fails rather than compounding the error.
+      }
+    }
   }
 
   async function showManual() {
     setChoice("manual");
-    setInstructions(await ManualInstallInstructions());
+    try {
+      setInstructions(await ManualInstallInstructions());
+    } catch (e) {
+      setInstructions([`Failed to load manual install instructions: ${String(e)}`]);
+    }
+  }
+
+  if (checkError) {
+    return (
+      <Modal title="Dependencies needed" onClose={onResolved}>
+        <div className="dep-error">Couldn't check dependencies: {checkError}</div>
+        <div className="dep-actions">
+          <Button variant="ghost" onClick={check}>
+            Retry
+          </Button>
+          <Button variant="ghost" onClick={onResolved}>
+            Continue anyway
+          </Button>
+        </div>
+      </Modal>
+    );
   }
 
   if (statuses === null || statuses.every((d) => d.installed)) {

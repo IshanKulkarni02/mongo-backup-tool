@@ -69,6 +69,16 @@ type Session interface {
 	Close(ctx context.Context) error
 }
 
+// SchemaLister is implemented by SQL engines whose SQLSession "database"
+// parameter (ListNamespaces/TableSchema/Query/...) actually means a schema
+// within a fixed database, not a real sibling database — Postgres today.
+// For those engines, ListDatabases keeps returning real database names
+// (whatever else needs those), and ListSchemas is the separate, correct
+// source for a schema picker.
+type SchemaLister interface {
+	ListSchemas(ctx context.Context) ([]string, error)
+}
+
 // DocumentSession is the document-store surface (MongoDB; later any engine
 // whose Caps.Documents is true). Documents cross this boundary as Extended
 // JSON strings — the same representation the desktop browser already uses.

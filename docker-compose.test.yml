@@ -34,6 +34,11 @@ services:
       MYSQL_PASSWORD: dbhelm
     ports:
       - "53306:3306"
+    volumes:
+      # Grants dbhelm access to a second database (dbhelm_test2) beyond
+      # the one MYSQL_DATABASE creates, so the integration suite can
+      # exercise cross-database behavior (see #20).
+      - ./scripts/dev-seed/mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u dbhelm -pdbhelm"]
       interval: 2s

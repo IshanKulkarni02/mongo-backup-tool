@@ -151,34 +151,36 @@ func DeleteCredential(conn Connection) {
 // MigrateCredentials moves any plaintext passwords in the stored config
 // into the system keyring. It reports how many connections were migrated.
 // A no-op (0, nil) when no keyring is available or nothing needs moving.
+// Goes through Update so this (called from a startup goroutine) can't
+// lose an in-flight AddConnection/RemoveConnection/SwitchTenant call's
+// write, or have its own write lost to one of theirs.
 func MigrateCredentials() (int, error) {
 	if !secrets.Available() {
 		return 0, nil
 	}
-	cfg, err := Load()
-	if err != nil {
-		return 0, err
-	}
 	needs := 0
-	for _, c := range cfg.Connections {
-		if c.CredentialRef == "" {
-			if _, _, ok := splitPassword(c.URI); ok {
+	err := Update(func(cfg *Config) error {
+		for _, c := range cfg.Connections {
+			if c.CredentialRef == "" {
+				if _, _, ok := splitPassword(c.URI); ok {
+					needs++
+					continue
+				}
+			}
+			if c.SSHPasswordRef == "" && c.SSHPassword != "" {
 				needs++
 				continue
 			}
+			if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
+				needs++
+			}
 		}
-		if c.SSHPasswordRef == "" && c.SSHPassword != "" {
-			needs++
-			continue
+		if needs == 0 {
+			return errNoChange
 		}
-		if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
-			needs++
-		}
-	}
-	if needs == 0 {
-		return 0, nil
-	}
-	if err := Save(cfg); err != nil {
+		return nil
+	})
+	if err != nil {
 		return 0, err
 	}
 	return needs, nil
@@ -193,7 +195,20 @@ func RedactURI(raw string) string {
 	if _, hasPass := u.User.Password(); hasPass {
 		u.User = url.UserPassword(u.User.Username(), "****")
 	}
-	// url.String() percent-encodes "*" in the userinfo component; undo that
-	// so the mask reads as **** instead of %2A%2A%2A%2A.
-	return strings.ReplaceAll(u.String(), "%2A", "*")
+	full := u.String()
+	// url.String() percent-encodes "*" in the userinfo component; undo
+	// that so the mask reads as **** instead of %2A%2A%2A%2A — but only
+	// within the userinfo segment (everything before the first "@"), not
+	// the whole serialized URL. A pre-existing %2A elsewhere — e.g. a
+	// percent-encoded literal "*" in a query value, like
+	// "?token=abc%2Adef" — must survive untouched; net/url preserves
+	// RawQuery byte-for-byte, so a blanket replace corrupts it into
+	// "?token=abc*def". Splitting on the first "@" is safe here: a
+	// literal "@" inside userinfo is always percent-encoded as %40 by
+	// url.String() (verified directly), so the first unescaped "@" in
+	// the serialized URL can only be the userinfo/host delimiter.
+	if idx := strings.IndexByte(full, '@'); idx != -1 {
+		return strings.ReplaceAll(full[:idx], "%2A", "*") + full[idx:]
+	}
+	return full
 }

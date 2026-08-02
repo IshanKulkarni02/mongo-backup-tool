@@ -10,6 +10,7 @@ import (
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
 	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
@@ -73,11 +74,17 @@ func (a *App) DeleteBackup(id string) error {
 	if !ok {
 		return fmt.Errorf("no backup with id %q", id)
 	}
-	if err := os.Remove(filepath.Join(dir, bk.FileName)); err != nil && !os.IsNotExist(err) {
+	archivePath, err := pathsafety.SafeJoin(dir, bk.FileName)
+	if err != nil {
 		return err
 	}
-	idx.Remove(id)
-	return store.Save(dir, idx)
+	if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return store.Update(dir, func(idx *store.Index) error {
+		idx.Remove(id)
+		return nil
+	})
 }
 
 // runBackup mirrors cmd.RunBackup / internal/tui's identical helper. It's
@@ -96,7 +103,7 @@ func runBackup(connName, uri, dbName string) (string, error) {
 		label = "all"
 	}
 	id := uuid.NewString()
-	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", connName, label, time.Now().Format("20060102-150405"))
+	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", pathsafety.SanitizeComponent(connName), pathsafety.SanitizeComponent(label), time.Now().Format("20060102-150405"))
 	archivePath := filepath.Join(backupsDir, fileName)
 
 	if _, err := mongotools.Dump(mongotools.DumpOptions{
@@ -112,19 +119,18 @@ func runBackup(connName, uri, dbName string) (string, error) {
 		size = info.Size()
 	}
 
-	idx, err := store.Load(backupsDir)
-	if err != nil {
-		return "", err
-	}
-	idx.Backups = append(idx.Backups, store.Backup{
-		ID:         id,
-		Connection: connName,
-		Database:   dbName,
-		FileName:   fileName,
-		SizeBytes:  size,
-		CreatedAt:  time.Now().Format(time.RFC3339),
+	err = store.Update(backupsDir, func(idx *store.Index) error {
+		idx.Backups = append(idx.Backups, store.Backup{
+			ID:         id,
+			Connection: connName,
+			Database:   dbName,
+			FileName:   fileName,
+			SizeBytes:  size,
+			CreatedAt:  time.Now().Format(time.RFC3339),
+		})
+		return nil
 	})
-	if err := store.Save(backupsDir, idx); err != nil {
+	if err != nil {
 		return "", err
 	}
 	return id, nil
@@ -144,9 +150,14 @@ func runBackupRestore(connName, uri, backupID string) error {
 		return fmt.Errorf("no backup with id %q", backupID)
 	}
 
+	archivePath, err := pathsafety.SafeJoin(backupsDir, bk.FileName)
+	if err != nil {
+		return err
+	}
+
 	_, err = mongotools.Restore(mongotools.RestoreOptions{
 		URI:         uri,
-		ArchivePath: filepath.Join(backupsDir, bk.FileName),
+		ArchivePath: archivePath,
 		SourceDB:    bk.Database,
 		Drop:        true,
 	})

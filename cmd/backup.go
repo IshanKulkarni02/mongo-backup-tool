@@ -12,6 +12,7 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
 	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
+	"github.com/IshanKulkarni02/dbhelm/internal/pathsafety"
 	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
 
@@ -57,7 +58,7 @@ func RunBackup(connName, dbName string) (string, error) {
 		label = "all"
 	}
 	id := uuid.NewString()
-	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", connName, label, time.Now().Format("20060102-150405"))
+	fileName := fmt.Sprintf("%s_%s_%s.archive.gz", pathsafety.SanitizeComponent(connName), pathsafety.SanitizeComponent(label), time.Now().Format("20060102-150405"))
 	archivePath := filepath.Join(backupsDir, fileName)
 
 	fmt.Printf("Backing up %q (db=%s)...\n", connName, label)
