@@ -190,11 +190,38 @@ func (b *fsBackend) WriteDocRefs(manifestID, collection string, refs docRefItera
 		os.Remove(tmp)
 		return err
 	}
+	// Flush only moves data from the bufio.Writer's in-memory buffer into
+	// the OS's page cache — Sync is what actually gets it onto disk, which
+	// is what the doc comment above ("durably written") promises. Without
+	// this, a crash/power-loss right after the rename below can leave the
+	// renamed file containing only whatever the OS had already flushed on
+	// its own schedule, not every entry actually written here — the same
+	// reasoning manifest.go's writeFileAtomic already applies to
+	// index.json/manifest.json.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	// Best-effort: the rename is a directory-entry change, which on most
+	// POSIX filesystems needs its own directory fsync to survive an actual
+	// power loss/kernel panic, not just a killed process (which the
+	// rename's atomicity alone already protects against) — same as
+	// writeFileAtomic. Some platforms/filesystems don't support fsync on a
+	// directory descriptor at all, so a failure here doesn't invalidate
+	// the write that already completed.
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // IterDocRefs streams the doc-ref list one line at a time via a buffered

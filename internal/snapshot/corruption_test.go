@@ -86,6 +86,36 @@ func TestFSBackendCorruptDocRefLineFailsClearly(t *testing.T) {
 	}
 }
 
+// TestFSBackendWriteDocRefsLeavesNoTempFiles guards against #49's fsync
+// fix regressing the surrounding temp-file-then-rename mechanics: a
+// successful WriteDocRefs must leave only the final .docrefs.jsonl file
+// behind, not a stray .tmp file, exactly like writeFileAtomic already
+// guarantees for index.json/manifest.json (see
+// TestWriteFileAtomicLeavesNoTempFiles). The fsync call itself durability
+// against actual power loss, which a single-process unit test has no way
+// to observe directly — this instead confirms adding it didn't disturb
+// the observable write-then-rename behavior.
+func TestFSBackendWriteDocRefsLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	b, err := newFSBackend(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	if err := b.WriteDocRefs("m1", "widgets", newSliceDocRefIterator([]DocRef{{ID: "a", Hash: "h"}})); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(b.docRefsDir("m1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].IsDir() {
+		t.Fatalf("docRefsDir has %v after a successful WriteDocRefs, want exactly one file (no leftover .tmp)", entries)
+	}
+}
+
 // TestFSBackendDocRefsCollisionResistant is the regression test for #48:
 // sanitize() maps every character outside [A-Za-z0-9._-] to "_", so two
 // differently-named collections can sanitize to the same string (e.g.
