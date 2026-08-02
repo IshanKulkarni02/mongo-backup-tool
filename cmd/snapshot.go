@@ -39,20 +39,25 @@ func resolveConn(name string) (*config.Connection, error) {
 // including its SSH tunnel settings if any are set — the one place this
 // mapping happens for CLI-side session opening, so openSQLSession and
 // openEngineSession can't drift out of sync with each other.
-func connConfigFor(conn *config.Connection) engine.ConnConfig {
+func connConfigFor(conn *config.Connection) (engine.ConnConfig, error) {
 	connCfg := engine.ConnConfig{
 		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
 		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
 	}
 	if conn.SSHHost != "" {
+		knownHosts, err := config.SSHKnownHostsPath()
+		if err != nil {
+			return engine.ConnConfig{}, err
+		}
 		connCfg.SSHTunnel = &tunnel.Config{
-			Host:          conn.SSHHost,
-			User:          conn.SSHUser,
-			Password:      conn.SSHPassword,
-			PrivateKeyPEM: conn.SSHPrivateKey,
+			Host:           conn.SSHHost,
+			User:           conn.SSHUser,
+			Password:       conn.SSHPassword,
+			PrivateKeyPEM:  conn.SSHPrivateKey,
+			KnownHostsPath: knownHosts,
 		}
 	}
-	return connCfg
+	return connCfg, nil
 }
 
 // openEngineSession opens a one-shot engine.Session for a saved
@@ -67,7 +72,11 @@ func openEngineSession(conn *config.Connection) (engine.Session, func(), error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	sess, err := eng.Open(context.Background(), connConfigFor(conn))
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	sess, err := eng.Open(context.Background(), connCfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,7 +91,11 @@ func openSQLSession(conn *config.Connection) (engine.SQLSession, func(), error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	sess, err := eng.Open(context.Background(), connConfigFor(conn))
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	sess, err := eng.Open(context.Background(), connCfg)
 	if err != nil {
 		return nil, nil, err
 	}

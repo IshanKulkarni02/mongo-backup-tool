@@ -56,11 +56,16 @@ func resolveEngineConn(name string) (engine.ConnConfig, engine.Engine, error) {
 		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
 	}
 	if conn.SSHHost != "" {
+		knownHosts, err := config.SSHKnownHostsPath()
+		if err != nil {
+			return engine.ConnConfig{}, nil, err
+		}
 		connCfg.SSHTunnel = &tunnel.Config{
-			Host:          conn.SSHHost,
-			User:          conn.SSHUser,
-			Password:      conn.SSHPassword,
-			PrivateKeyPEM: conn.SSHPrivateKey,
+			Host:           conn.SSHHost,
+			User:           conn.SSHUser,
+			Password:       conn.SSHPassword,
+			PrivateKeyPEM:  conn.SSHPrivateKey,
+			KnownHostsPath: knownHosts,
 		}
 	}
 	return connCfg, eng, nil
