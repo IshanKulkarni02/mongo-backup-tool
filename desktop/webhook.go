@@ -9,12 +9,22 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/listener"
 )
 
+// WebhookListenerInfo is what the frontend needs to point a device at a
+// freshly started listener: the loopback address it's bound to, and the
+// auth token the device must send back via listener.TokenHeader on every
+// request (the listener refuses anything else with 401 — see
+// internal/listener's Start doc comment for why).
+type WebhookListenerInfo struct {
+	Addr  string `json:"addr"`
+	Token string `json:"token"`
+}
+
 // StartWebhookListener starts (or restarts, if already running) a local
 // HTTP server on port that logs every request it receives via the
 // "webhook:request" event — for debugging a device integration (e.g. a
 // ZKTeco/eSSL biometric terminal's ADMS push protocol) by pointing it at
 // this listener instead of production.
-func (a *App) StartWebhookListener(port int) (string, error) {
+func (a *App) StartWebhookListener(port int) (WebhookListenerInfo, error) {
 	a.webhookM.Lock()
 	defer a.webhookM.Unlock()
 	if a.webhookL != nil {
@@ -25,10 +35,10 @@ func (a *App) StartWebhookListener(port int) (string, error) {
 		runtime.EventsEmit(a.ctx, "webhook:request", r)
 	})
 	if err != nil {
-		return "", fmt.Errorf("starting listener on port %d: %w", port, err)
+		return WebhookListenerInfo{}, fmt.Errorf("starting listener on port %d: %w", port, err)
 	}
 	a.webhookL = l
-	return l.Addr(), nil
+	return WebhookListenerInfo{Addr: l.Addr(), Token: l.Token()}, nil
 }
 
 // StopWebhookListener stops the running listener, if any.

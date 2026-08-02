@@ -23,6 +23,7 @@ import { JsonTree } from "../components/JsonTree";
 import { Select } from "../components/Select";
 import { useToast } from "../components/Toast";
 import { quoteIdent, sqlLiteral } from "../lib/sql";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./WebhookView.css";
 
@@ -30,12 +31,17 @@ import "./WebhookView.css";
 // string values suitable for a SQL literal — objects/arrays are
 // JSON-stringified rather than excluded, so a mapping can still target
 // them (e.g. into a JSON/JSONB column) even though most device payloads
-// are flat.
-function flattenTopLevel(payload: unknown): Record<string, string> {
+// are flat. A JSON `null` value maps to the JS value `null` rather than
+// being stringified to the text "null": JSON.stringify(null) would
+// otherwise produce that exact string, indistinguishable from a payload
+// field whose actual value is the string "null" — collapsing a
+// genuinely-null field and one containing the literal word into the same
+// text before submitSQL ever gets a chance to tell them apart.
+function flattenTopLevel(payload: unknown): Record<string, string | null> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  const out: Record<string, string> = {};
+  const out: Record<string, string | null> = {};
   for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
-    out[k] = typeof v === "string" ? v : JSON.stringify(v);
+    out[k] = v === null ? null : typeof v === "string" ? v : JSON.stringify(v);
   }
   return out;
 }
@@ -58,8 +64,10 @@ export function WebhookView() {
   const [running, setRunning] = useState(false);
   const [port, setPort] = useState("8089");
   const [addr, setAddr] = useState("");
+  const [token, setToken] = useState("");
   const [requests, setRequests] = useState<WebhookRequest[]>([]);
   const [insertTarget, setInsertTarget] = useState<WebhookRequest | null>(null);
+  const [starting, setStarting] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -79,13 +87,17 @@ export function WebhookView() {
       toast.push("error", "Enter a valid port number");
       return;
     }
+    setStarting(true);
     try {
-      const a = await StartWebhookListener(p);
-      setAddr(a);
+      const info = await StartWebhookListener(p);
+      setAddr(info.addr);
+      setToken(info.token);
       setRunning(true);
-      toast.push("success", `Listening on ${a}`);
+      toast.push("success", `Listening on ${info.addr}`);
     } catch (e) {
       toast.push("error", String(e));
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -106,14 +118,16 @@ export function WebhookView() {
       </div>
       <p className="webhook-hint">
         Point a device that pushes data over HTTP (e.g. a biometric terminal's ADMS push protocol) at this listener
-        to see exactly what it sends before wiring up a real integration.
+        to see exactly what it sends before wiring up a real integration. The listener only accepts localhost
+        connections and requires the auth token below on every request — a device that can't send a custom header
+        can't use this listener.
       </p>
 
       <div className="query-bar">
         <Input placeholder="Port" value={port} onChange={(e) => setPort(e.target.value)} disabled={running} style={{ width: 120 }} />
         {!running ? (
-          <Button onClick={start}>
-            <Radio size={14} /> Start listening
+          <Button onClick={start} disabled={starting}>
+            <Radio size={14} /> {starting ? "Starting..." : "Start listening"}
           </Button>
         ) : (
           <Button variant="danger" onClick={stop}>
@@ -127,6 +141,12 @@ export function WebhookView() {
           </Button>
         )}
       </div>
+
+      {running && token && (
+        <p className="webhook-hint mono">
+          Send header <strong>X-Dbhelm-Webhook-Token: {token}</strong> with every request, or it's refused with 401.
+        </p>
+      )}
 
       {requests.length === 0 && (
         <EmptyState
@@ -175,6 +195,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const startDatabasesRequest = useStaleGuard();
+  const startCollectionsTablesRequest = useStaleGuard();
+  const startSchemaRequest = useStaleGuard();
 
   const activeConn = connections.find((c) => c.name === connection);
   const activeEngine = activeConn?.engine ?? "";
@@ -200,7 +223,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     TestConnection(connection).then((dbs) => {
+      if (isStale()) return;
       setDatabases(dbs);
       if (dbs.length > 0) setDatabase(dbs[0]);
     });
@@ -208,8 +233,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
 
   useEffect(() => {
     if (!connection || !database) return;
-    if (isMongo) ListCollections(connection, database).then(setCollections);
-    if (isSQL) ListTables(connection, database).then(setTables);
+    const isStale = startCollectionsTablesRequest();
+    if (isMongo) ListCollections(connection, database).then((cols) => { if (!isStale()) setCollections(cols); });
+    if (isSQL) ListTables(connection, database).then((tbls) => { if (!isStale()) setTables(tbls); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, activeEngine]);
 
@@ -218,7 +244,14 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       setSchema(null);
       return;
     }
+    // Picking table "orders" then quickly re-picking "customers" before
+    // this GetTableSchema("orders") call returns must not let orders'
+    // columns/auto-mapping apply while `table` state already shows
+    // "customers" — submitSQL would otherwise build an INSERT INTO
+    // customers (...) using column names from orders' schema.
+    const isStale = startSchemaRequest();
     GetTableSchema(connection, database, table).then((s) => {
+      if (isStale()) return;
       setSchema(s);
       // Pre-fill the mapping with case-insensitive name matches between
       // the payload's top-level keys and the table's columns.
@@ -258,9 +291,16 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       const cols = mapped.map((c) => quoteIdent(activeEngine, c.name)).join(", ");
       const vals = mapped
         .map((c) => {
-          const raw = flatFields[mapping[c.name]] ?? "";
-          const looksNumeric = /^-?\d+(\.\d+)?$/.test(raw.trim());
-          return sqlLiteral(raw, looksNumeric ? "number" : "string");
+          const raw = flatFields[mapping[c.name]];
+          // Only an actual JS null (a genuinely-null JSON field) becomes
+          // SQL NULL — a mapped field that's simply absent still falls
+          // back to an empty string (the prior behavior), and a field
+          // whose value is literally the text "null" is never confused
+          // with either.
+          if (raw === null) return "NULL";
+          const value = raw ?? "";
+          const looksNumeric = /^-?\d+(\.\d+)?$/.test(value.trim());
+          return sqlLiteral(value, looksNumeric ? "number" : "string", activeEngine);
         })
         .join(", ");
       const sql = `INSERT INTO ${ident} (${cols}) VALUES (${vals})`;

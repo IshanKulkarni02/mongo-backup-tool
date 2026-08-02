@@ -109,6 +109,51 @@ func TestSaveDoesNotCommitWhenNotGitRepo(t *testing.T) {
 	}
 }
 
+// TestSaveUnstagesFileWhenCommitFails is the regression test for #24: a
+// failed "git commit" (e.g. rejected by a pre-commit hook) must not leave
+// the file staged, or a later unrelated Save's commit would silently sweep
+// it in too.
+func TestSaveUnstagesFileWhenCommitFails(t *testing.T) {
+	if !hasGit(t) {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	installRejectingPreCommitHook(t, dir)
+
+	res, err := Save(dir, "add index", "CREATE INDEX idx ON t(x);", "add idx migration")
+	if err == nil {
+		t.Fatal("expected an error from the rejected commit")
+	}
+	if res.Committed {
+		t.Fatal("expected Committed=false when the commit was rejected")
+	}
+
+	status, err := exec.Command("git", "-C", dir, "status", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v", err)
+	}
+	line := strings.TrimSpace(string(status))
+	if line == "" {
+		t.Fatal("expected the untracked migration file to still show in git status")
+	}
+	if strings.HasPrefix(line, "A ") || strings.Contains(line, "\nA ") {
+		t.Fatalf("expected the migration file to be unstaged after the failed commit, got status: %s", status)
+	}
+	if !strings.Contains(line, "??") {
+		t.Fatalf("expected the migration file to appear as untracked (??), got status: %s", status)
+	}
+}
+
+func installRejectingPreCommitHook(t *testing.T, dir string) {
+	t.Helper()
+	hookPath := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	script := "#!/bin/sh\nexit 1\n"
+	if err := os.WriteFile(hookPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("installing pre-commit hook: %v", err)
+	}
+}
+
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	run := func(args ...string) {

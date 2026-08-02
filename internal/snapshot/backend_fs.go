@@ -2,6 +2,8 @@ package snapshot
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -125,7 +127,28 @@ func (b *fsBackend) docRefsDir(manifestID string) string {
 	return filepath.Join(manifestsDir(b.dir), manifestID)
 }
 
+// docRefsPath derives a filesystem-safe, collision-resistant file name for
+// one collection's doc-ref list, the same way scopeDirName does for scope
+// directories: sanitizing to [A-Za-z0-9._-] alone is lossy (e.g. Mongo
+// collections "a$b" and "a!b" both become "a_b"), so a short hash of the
+// *original, unsanitized* collection name is appended — the sanitized
+// prefix keeps the file human-readable/git-diffable, the hash suffix
+// guarantees two differently-named collections in the same manifest never
+// collide regardless of what characters their names contain.
 func (b *fsBackend) docRefsPath(manifestID, collection string) string {
+	sum := sha256.Sum256([]byte(collection))
+	suffix := hex.EncodeToString(sum[:])[:10]
+	return filepath.Join(b.docRefsDir(manifestID), fmt.Sprintf("%s__%s.docrefs.jsonl", sanitize(collection), suffix))
+}
+
+// legacyDocRefsPath is where docRefsPath used to place a collection's
+// doc-ref file, before the collision-resistant hash suffix was added (see
+// docRefsPath) — sanitize(collection) alone, with no guard against two
+// different names sanitizing to the same string. IterDocRefs falls back
+// to this path so doc-ref data written by an older dbhelm build (e.g. an
+// existing Git/LFS remote-synced scope) is still readable after
+// upgrading, rather than silently appearing empty.
+func (b *fsBackend) legacyDocRefsPath(manifestID, collection string) string {
 	return filepath.Join(b.docRefsDir(manifestID), sanitize(collection)+".docrefs.jsonl")
 }
 
@@ -206,6 +229,11 @@ func (b *fsBackend) WriteDocRefs(manifestID, collection string, refs docRefItera
 // collection.
 func (b *fsBackend) IterDocRefs(manifestID, collection string) (docRefIterator, error) {
 	f, err := os.Open(b.docRefsPath(manifestID, collection))
+	if os.IsNotExist(err) {
+		// Fall back to the pre-collision-fix path, for doc-ref data written
+		// by an older dbhelm build (see legacyDocRefsPath).
+		f, err = os.Open(b.legacyDocRefsPath(manifestID, collection))
+	}
 	if os.IsNotExist(err) {
 		return newSliceDocRefIterator(nil), nil
 	}
