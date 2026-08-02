@@ -23,6 +23,7 @@ import (
 // and a real mongodump, not just at the store package's own unit-test level.
 func TestCreateBackupConcurrentCallsDoNotLoseIndexEntries(t *testing.T) {
 	a, uri := newTestAppWithMongoConn(t, "backup-race-test", false)
+	jobs := newJobTracker(a)
 
 	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
@@ -44,7 +45,7 @@ func TestCreateBackupConcurrentCallsDoNotLoseIndexEntries(t *testing.T) {
 	}
 
 	for i, id := range jobIDs {
-		job := waitForJob(t, a, id)
+		job := jobs.wait(t, id)
 		if job.Status != JobDone {
 			t.Fatalf("backup job #%d: expected success, got status=%s message=%s", i, job.Status, job.Message)
 		}
@@ -66,6 +67,7 @@ func TestCreateBackupConcurrentCallsDoNotLoseIndexEntries(t *testing.T) {
 // behind pointing at a file os.Remove already unlinked.
 func TestConcurrentCreateAndDeleteBackupDoNotCorruptIndex(t *testing.T) {
 	a, uri := newTestAppWithMongoConn(t, "backup-create-delete-race-test", false)
+	jobs := newJobTracker(a)
 
 	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
@@ -83,7 +85,7 @@ func TestConcurrentCreateAndDeleteBackupDoNotCorruptIndex(t *testing.T) {
 		if err != nil {
 			t.Fatalf("seed CreateBackup #%d: %v", i, err)
 		}
-		job := waitForJob(t, a, id)
+		job := jobs.wait(t, id)
 		if job.Status != JobDone {
 			t.Fatalf("seed backup job #%d: expected success, got status=%s message=%s", i, job.Status, job.Message)
 		}
@@ -109,7 +111,7 @@ func TestConcurrentCreateAndDeleteBackupDoNotCorruptIndex(t *testing.T) {
 	}
 
 	for i, jobID := range createJobIDs {
-		job := waitForJob(t, a, jobID)
+		job := jobs.wait(t, jobID)
 		if job.Status != JobDone {
 			t.Fatalf("concurrent backup job #%d: expected success, got status=%s message=%s", i, job.Status, job.Message)
 		}

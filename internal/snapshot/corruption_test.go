@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestBoltBackendRejectsCorruptStoreFile confirms that a truncated/garbage
@@ -83,6 +84,36 @@ func TestFSBackendCorruptDocRefLineFailsClearly(t *testing.T) {
 	_, err = drainDocRefIterator(it)
 	if err == nil {
 		t.Fatal("expected an error reading a corrupted doc-ref line, got nil")
+	}
+}
+
+// TestFSBackendWriteDocRefsLeavesNoTempFiles guards against #49's fsync
+// fix regressing the surrounding temp-file-then-rename mechanics: a
+// successful WriteDocRefs must leave only the final .docrefs.jsonl file
+// behind, not a stray .tmp file, exactly like writeFileAtomic already
+// guarantees for index.json/manifest.json (see
+// TestWriteFileAtomicLeavesNoTempFiles). The fsync call itself durability
+// against actual power loss, which a single-process unit test has no way
+// to observe directly — this instead confirms adding it didn't disturb
+// the observable write-then-rename behavior.
+func TestFSBackendWriteDocRefsLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	b, err := newFSBackend(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	if err := b.WriteDocRefs("m1", "widgets", newSliceDocRefIterator([]DocRef{{ID: "a", Hash: "h"}})); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(b.docRefsDir("m1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].IsDir() {
+		t.Fatalf("docRefsDir has %v after a successful WriteDocRefs, want exactly one file (no leftover .tmp)", entries)
 	}
 }
 
@@ -308,6 +339,13 @@ func TestGCRecoversAbandonedManifest(t *testing.T) {
 	if err := saveManifest(scope, abandoned); err != nil {
 		t.Fatal(err)
 	}
+	// Back-date the manifest file past recoverGracePeriod: a manifest this
+	// young is presumed to be an in-flight Create that just hasn't reached
+	// its index append yet (see #52), not something GC should touch.
+	old := time.Now().Add(-2 * recoverGracePeriod)
+	if err := os.Chtimes(manifestPath(scope, abandoned.ID), old, old); err != nil {
+		t.Fatal(err)
+	}
 	if err := backend.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -343,6 +381,78 @@ func TestGCRecoversAbandonedManifest(t *testing.T) {
 	}
 	if m.DocCount() != 1 {
 		t.Errorf("real snapshot DocCount after GC = %d, want 1", m.DocCount())
+	}
+}
+
+// TestGCDoesNotReclaimFreshUnindexedManifest is the regression test for
+// #52: Create/CreateSQL write a manifest and its doc-refs *before*
+// acquiring the scope lock for the (fast) index append, so there's a
+// real — if normally brief — window where a brand-new manifest exists on
+// disk but isn't indexed yet, simply because that Create call hasn't
+// reached its index append, not because anything crashed. Without a
+// grace period, a concurrent GC could mistake that in-flight manifest for
+// an abandoned one and delete it, permanently breaking the snapshot once
+// Create resumes and appends its now-dangling ID to the index.
+func TestGCDoesNotReclaimFreshUnindexedManifest(t *testing.T) {
+	withTestScope(t)
+	scope, err := scopeDir("gc-inflight-create", "gcdb5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := OpenBackend(scope, BackendBolt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate Create() up to (but not including) its index append: the
+	// manifest and doc-refs are fully written, but the index knows
+	// nothing about this snapshot yet — indistinguishable on disk from a
+	// genuinely abandoned manifest, except for its age.
+	h, _, err := putOne(backend, []byte(`{"v":"in-flight"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFlight := &Manifest{ID: "snap-in-flight", Connection: "gc-inflight-create", Database: "gcdb5", CreatedAt: "2026-01-01T00:00:00Z",
+		Collections: map[string]CollectionManifest{"widgets": {DocCount: 1}}}
+	if err := backend.WriteDocRefs(inFlight.ID, "widgets", newSliceDocRefIterator([]DocRef{{ID: "a", Hash: h}})); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveManifest(scope, inFlight); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// GC runs in this gap, before Create's own index append.
+	result, err := GC(GCOptions{Connection: "gc-inflight-create", Database: "gcdb5", KeepLast: 10})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if result.AbandonedRecovered != 0 {
+		t.Fatalf("AbandonedRecovered = %d, want 0 — GC reclaimed a fresh, still-in-flight manifest", result.AbandonedRecovered)
+	}
+	if _, err := os.Stat(manifestPath(scope, "snap-in-flight")); err != nil {
+		t.Fatalf("expected the in-flight manifest to survive GC: %v", err)
+	}
+
+	// Create resumes and appends its summary — this must not be a dangling
+	// reference to a manifest GC already deleted.
+	idx, err := loadIndex(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx.Snapshots = append(idx.Snapshots, Summary{ID: "snap-in-flight", CreatedAt: inFlight.CreatedAt, DocCount: 1})
+	if err := saveIndex(scope, idx); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := Get("gc-inflight-create", "gcdb5", "snap-in-flight")
+	if err != nil {
+		t.Fatalf("Get(snap-in-flight) after its Create completed: %v", err)
+	}
+	if m.DocCount() != 1 {
+		t.Errorf("DocCount = %d, want 1", m.DocCount())
 	}
 }
 
@@ -421,7 +531,18 @@ func TestGCPartialDeletionFailureLeavesRecoverableAbandonedManifest(t *testing.T
 	// Restore write access (as if the disk-full/permissions problem
 	// resolved itself, or a fresh process starts with normal
 	// permissions) and let a subsequent GC pass's abandoned-manifest
-	// recovery finish the job.
+	// recovery finish the job. Back-date the leftover manifest past
+	// recoverGracePeriod first: #52 makes recoverAbandonedManifests treat
+	// any sufficiently-young unindexed manifest as a possibly-in-flight
+	// Create rather than something safe to reclaim, and this manifest is
+	// otherwise indistinguishable from that case (both are unindexed
+	// files that exist purely because a real write raced GC) — without
+	// backdating, the follow-up pass below would correctly refuse to
+	// touch it yet.
+	old := time.Now().Add(-2 * recoverGracePeriod)
+	if err := os.Chtimes(manifestPath(scope, "snap-pruned"), old, old); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(mdir, 0o755); err != nil {
 		t.Fatal(err)
 	}

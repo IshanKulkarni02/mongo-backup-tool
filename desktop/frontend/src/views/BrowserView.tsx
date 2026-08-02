@@ -143,7 +143,7 @@ export function BrowserView({
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">{beginner ? "My Data" : "Browser"}</h1>
+        <h1 className="view-title">{beginner ? "My Documents" : "Browser"}</h1>
       </div>
 
       <div className="scope-picker">

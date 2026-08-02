@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
-	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
 	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 
 	// Blank-imported so their init() registers each engine with the
@@ -193,7 +193,19 @@ var connectionTestCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("no connection named %q", args[0])
 		}
-		dbs, err := mongotools.TestConnection(conn.URI)
+		// Engine-agnostic: every engine.Session implements Ping and
+		// ListDatabases, so this works the same for MongoDB, Postgres,
+		// MySQL, and SQLite instead of unconditionally dialing with the
+		// Mongo driver (which rejects any non-mongodb:// URI outright).
+		sess, release, err := openEngineSession(conn)
+		if err != nil {
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		defer release()
+		if err := sess.Ping(context.Background()); err != nil {
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		dbs, err := sess.ListDatabases(context.Background())
 		if err != nil {
 			return fmt.Errorf("connection failed: %w", err)
 		}

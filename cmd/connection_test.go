@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
@@ -173,6 +174,43 @@ func TestConnectionAddSSHKeyFromFile(t *testing.T) {
 	}
 	if conn.SSHPrivateKey != pemContent {
 		t.Fatalf("expected SSH private key file contents to be read in, got %q", conn.SSHPrivateKey)
+	}
+}
+
+// TestConnectionTestWorksForNonMongoEngine is the regression test for
+// #57: `connection test` unconditionally called mongotools.TestConnection,
+// which dials with the Mongo driver's ApplyURI — and ApplyURI rejects any
+// URI whose scheme isn't mongodb/mongodb+srv. Every non-Mongo connection
+// (postgres, mysql, sqlite — all explicitly supported by `connection
+// add --engine`) would fail `connection test` with a confusing
+// driver-level error instead of actually being tested. SQLite is used
+// here because it needs no external server: cfg.URI is just a file path,
+// so this exercises the real engine.Lookup -> Open -> Ping ->
+// ListDatabases path end-to-end with no mocking.
+func TestConnectionTestWorksForNonMongoEngine(t *testing.T) {
+	withTempConfigDir(t)
+	resetConnAddFlags()
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	connAddURI = dbPath
+	connAddEngine = "sqlite"
+	if err := connectionAddCmd.RunE(connectionAddCmd, []string{"sqlite-test"}); err != nil {
+		t.Fatalf("connection add: %v", err)
+	}
+
+	if err := connectionTestCmd.RunE(connectionTestCmd, []string{"sqlite-test"}); err != nil {
+		t.Fatalf("connection test failed for a non-Mongo (sqlite) engine: %v", err)
+	}
+}
+
+// TestConnectionTestReportsUnknownConnection confirms `connection test`
+// still reports a clear error for a name that was never saved, rather
+// than reaching the engine-dispatch code with a nil connection.
+func TestConnectionTestReportsUnknownConnection(t *testing.T) {
+	withTempConfigDir(t)
+
+	if err := connectionTestCmd.RunE(connectionTestCmd, []string{"does-not-exist"}); err == nil {
+		t.Fatal("expected an error for a connection that was never saved")
 	}
 }
 
