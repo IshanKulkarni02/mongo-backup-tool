@@ -59,10 +59,11 @@ func TestRunSQLQueryBlocksDangerousStatement(t *testing.T) {
 // cancelable job path, which has its own copy of the same gating.
 func TestRunSQLQueryJobBlocksWriteCTEOnReadOnlyConnection(t *testing.T) {
 	a := newTestAppWithSQLiteConnRO(t, "ro-conn", "file::memory:?cache=private", true)
+	jobs := newJobTracker(a)
 
 	sql := "WITH x AS (DELETE FROM sqlite_sequence RETURNING name) SELECT * FROM x"
 	id := a.RunSQLQueryJob("ro-conn", "main", sql)
-	job := waitForJob(t, a, id)
+	job := jobs.wait(t, id)
 	if job.Status != JobFailed {
 		t.Fatalf("expected job to fail, got status %q", job.Status)
 	}

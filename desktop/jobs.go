@@ -91,6 +91,14 @@ func (m *jobManager) finish(id string, err error, result any) {
 		j.Result = result
 	}
 	snapshot := *j
+	// The frontend never polls jobManager for a job's state — it only
+	// ever learns about it from the "job:update"/"job:progress" events
+	// pushed below and by progress() during the run. Once a job reaches
+	// a terminal state and this final update is about to be sent, its
+	// entry has nothing left to serve, so drop it here rather than
+	// letting jobs accumulate in this map for the rest of the app's
+	// session.
+	delete(m.jobs, id)
 	update := m.onUpdate
 	m.mu.Unlock()
 	if update != nil {
