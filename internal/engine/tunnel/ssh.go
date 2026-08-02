@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -224,18 +225,62 @@ func saveKnownHosts(path string, hosts map[string]string) error {
 // DialContext opens a connection to addr (the database's address) through
 // the tunnel, matching the signature database/sql drivers expect for a
 // custom dialer.
+//
+// t.client.Dial has no context/cancellation support, so it runs on its own
+// goroutine while this function races it against ctx.Done(). If ctx wins,
+// the dial may still be in flight and can still succeed afterward — that
+// net.Conn (a live SSH channel) would have no owner unless something
+// closes it. abandoned, guarded by mu, is the single source of truth both
+// sides consult: whichever of "the dial finished" and "ctx fired" reaches
+// the mutex first decides the outcome, so there's no window where the
+// connection is both handed off to nobody and left open. (A buffered
+// channel plus a non-blocking send/select on it — the more obvious-looking
+// fix — doesn't actually work here: a size-1 buffered channel with a
+// single sender never blocks, so a `select` with `default` around the send
+// would never take the default branch and never detect an abandoned
+// caller.)
 func (t *Tunnel) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	type result struct {
 		conn net.Conn
 		err  error
 	}
 	ch := make(chan result, 1)
+	var mu sync.Mutex
+	abandoned := false
+
 	go func() {
 		c, err := t.client.Dial(network, addr)
+		mu.Lock()
+		defer mu.Unlock()
+		if abandoned {
+			if err == nil && c != nil {
+				c.Close()
+			}
+			return
+		}
 		ch <- result{c, err}
 	}()
+
 	select {
 	case <-ctx.Done():
+		mu.Lock()
+		abandoned = true
+		mu.Unlock()
+		// The dial may have already completed and sent into ch's buffer
+		// in the brief window before this branch acquired mu (Go's select
+		// picks pseudo-randomly when both cases are simultaneously ready,
+		// so ctx.Done() can still be chosen even after a successful send).
+		// Because the goroutine above sends to ch only while still holding
+		// mu, that send is guaranteed to have already completed by the
+		// time this Lock/Unlock returns if it was going to happen at all
+		// — so a non-blocking drain here can never miss it.
+		select {
+		case r := <-ch:
+			if r.err == nil && r.conn != nil {
+				r.conn.Close()
+			}
+		default:
+		}
 		return nil, ctx.Err()
 	case r := <-ch:
 		return r.conn, r.err
