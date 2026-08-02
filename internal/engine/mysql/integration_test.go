@@ -127,6 +127,58 @@ func TestIntegrationMySQLIntrospectionAndQuery(t *testing.T) {
 	}
 }
 
+// TestIntegrationMySQLQueryExecuteExplainTargetSelectedDatabase guards
+// against #20: Query/Execute/Explain called sqlbase.RunQuery/RunExec/
+// FormatExplainRows directly on the pooled *sql.DB with no USE <database>
+// and no schema-qualification of the SQL text, so they silently ran
+// against whatever database the DSN connected to (dbhelm_test)
+// regardless of the database argument. The session here connects with
+// dbhelm_test as its DSN default (see testURI); every call below
+// explicitly targets the sibling dbhelm_test2 (see
+// scripts/dev-seed/mysql-init) instead, proving Query/Execute/Explain
+// actually select it rather than silently falling back to the DSN's
+// default.
+func TestIntegrationMySQLQueryExecuteExplainTargetSelectedDatabase(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const otherDB = "dbhelm_test2"
+
+	mustExec(t, s, otherDB, `DROP TABLE IF EXISTS it_seconddb_probe`)
+	t.Cleanup(func() { mustExec(t, s, otherDB, `DROP TABLE IF EXISTS it_seconddb_probe`) })
+	mustExec(t, s, otherDB, `CREATE TABLE it_seconddb_probe (id INT AUTO_INCREMENT PRIMARY KEY, label VARCHAR(50))`)
+	mustExec(t, s, otherDB, `INSERT INTO it_seconddb_probe (label) VALUES ('from dbhelm_test2')`)
+
+	result, err := s.Query(ctx, otherDB, `SELECT label FROM it_seconddb_probe`)
+	if err != nil {
+		t.Fatalf("Query against sibling database: %v", err)
+	}
+	if result.Total != 1 || result.Rows[0]["label"].Display != "from dbhelm_test2" {
+		t.Fatalf("expected the row from dbhelm_test2, got %+v", result.Rows)
+	}
+
+	n, err := s.Execute(ctx, otherDB, `UPDATE it_seconddb_probe SET label = 'updated'`)
+	if err != nil {
+		t.Fatalf("Execute against sibling database: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 row updated in dbhelm_test2, got %d", n)
+	}
+
+	plan, err := s.Explain(ctx, otherDB, `SELECT * FROM it_seconddb_probe`)
+	if err != nil {
+		t.Fatalf("Explain against sibling database: %v", err)
+	}
+	if plan == "" {
+		t.Fatal("expected non-empty EXPLAIN output for the sibling-database query")
+	}
+
+	// The DSN's default database (dbhelm_test) must be unaffected — the
+	// table was only ever created in dbhelm_test2.
+	if _, err := s.Query(ctx, "dbhelm_test", `SELECT * FROM it_seconddb_probe`); err == nil {
+		t.Fatal("expected it_seconddb_probe to not exist in the DSN's default database (dbhelm_test)")
+	}
+}
+
 func TestIntegrationMySQLCompositePrimaryKeyAndIndexes(t *testing.T) {
 	s := openTestSession(t)
 	ctx := context.Background()
@@ -192,5 +244,31 @@ func TestIntegrationMySQLBeginConsistentReadStreamsAllRowsIncludingBinary(t *tes
 	}
 	if !sawBinary {
 		t.Fatal("expected a row's BLOB column to round-trip as real []byte matching the inserted blob")
+	}
+}
+
+// TestIntegrationMySQLTenantSessionVar is the regression test for #7: the
+// tenant-session-var SET statement in Open() must succeed even though it
+// now runs on a fresh timeout instead of the ping-bounded one.
+func TestIntegrationMySQLTenantSessionVar(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess, err := (Engine{}).Open(ctx, engine.ConnConfig{
+		URI:              testURI(),
+		TenantSessionVar: "current_tenant",
+		TenantValue:      "acme",
+	})
+	if err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+	defer sess.Close(context.Background())
+
+	sqlSess := sess.(engine.SQLSession)
+	result, err := sqlSess.Query(context.Background(), "dbhelm_test", `SELECT @current_tenant AS tenant`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0]["tenant"].Display != "acme" {
+		t.Fatalf("expected tenant session var to be set to 'acme', got %+v", result.Rows)
 	}
 }
