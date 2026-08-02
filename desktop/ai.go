@@ -45,19 +45,17 @@ func (a *App) GetAISettings() (AISettingsInfo, error) {
 // pass "" to leave any previously stored key untouched, or a new value to
 // replace it (stored in the system keychain, not in config.json).
 func (a *App) SaveAISettings(providerID, model, ollamaHost, apiKey string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	cfg.AI.ProviderID = providerID
-	cfg.AI.Model = model
-	cfg.AI.OllamaHost = ollamaHost
-	if apiKey != "" {
-		if err := config.SetAIAPIKey(cfg, apiKey); err != nil {
-			return fmt.Errorf("saving API key: %w", err)
+	return config.Update(func(cfg *config.Config) error {
+		cfg.AI.ProviderID = providerID
+		cfg.AI.Model = model
+		cfg.AI.OllamaHost = ollamaHost
+		if apiKey != "" {
+			if err := config.SetAIAPIKey(cfg, apiKey); err != nil {
+				return fmt.Errorf("saving API key: %w", err)
+			}
 		}
-	}
-	return config.Save(cfg)
+		return nil
+	})
 }
 
 func (a *App) providerFromSettings() (ai.Provider, error) {
@@ -221,9 +219,10 @@ func (a *App) GenerateMockData(connectionName, database, dialect, table string, 
 	return a.runAIStream(ai.BuildMockDataPrompt(dialect, table, describeSchema(schema), rowCount))
 }
 
-// CheckOllama reports whether a local Ollama instance is installed/running.
-func (a *App) CheckOllama() depmanager.OllamaStatus {
-	return depmanager.CheckOllama(context.Background())
+// CheckOllama reports whether Ollama is installed/running at host (the
+// local default if host is "").
+func (a *App) CheckOllama(host string) depmanager.OllamaStatus {
+	return depmanager.CheckOllama(context.Background(), host)
 }
 
 // InstallOllama installs Ollama via the OS package manager as a background

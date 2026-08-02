@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,6 +53,14 @@ func freeTCPPort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// maxPortAttempts bounds the retry described below — freeTCPPort finds a
+// free port by binding then immediately closing a listener, which leaves
+// a window where another process (or a parallel test run) can grab that
+// same port before mongod itself binds it. A handful of retries with a
+// fresh port absorbs that race without turning every rare collision into
+// a test failure.
+const maxPortAttempts = 3
+
 // Start starts a throwaway mongod instance for integration tests and
 // returns its connection URI, skipping the test cleanly (not failing) if
 // mongod isn't available anywhere Find looks — the release-gate requirement
@@ -72,40 +81,62 @@ func Start(t *testing.T, replicaSetName string) (uri string) {
 		t.Skip("mongod not found on PATH or ~/.local/bin — skipping integration test")
 	}
 
-	dbpath := t.TempDir()
-	port := freeTCPPort(t)
-	logPath := filepath.Join(dbpath, "mongod.log")
+	var port int
+	var lastErr error
+	for attempt := 1; attempt <= maxPortAttempts; attempt++ {
+		dbpath := t.TempDir()
+		port = freeTCPPort(t)
+		logPath := filepath.Join(dbpath, "mongod.log")
 
-	args := []string{
-		"--dbpath", dbpath,
-		"--port", fmt.Sprint(port),
-		"--bind_ip", "127.0.0.1",
-		"--logpath", logPath,
-		"--noauth",
-	}
-	if replicaSetName != "" {
-		args = append(args, "--replSet", replicaSetName)
-	}
-
-	cmd := exec.Command(bin, args...)
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting mongod: %v", err)
-	}
-	proc := cmd.Process
-	t.Cleanup(func() {
-		if proc == nil {
-			return
+		args := []string{
+			"--dbpath", dbpath,
+			"--port", fmt.Sprint(port),
+			"--bind_ip", "127.0.0.1",
+			"--logpath", logPath,
+			"--noauth",
 		}
-		proc.Kill() // exact PID only, never a name-matching pkill
-		cmd.Wait()
-	})
+		if replicaSetName != "" {
+			args = append(args, "--replSet", replicaSetName)
+		}
 
-	uri = fmt.Sprintf("mongodb://127.0.0.1:%d/?directConnection=true&serverSelectionTimeoutMS=10000", port)
+		cmd := exec.Command(bin, args...)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("starting mongod: %v", err)
+		}
+		proc := cmd.Process
+		exited := make(chan struct{})
+		go func() { cmd.Wait(); close(exited) }()
+
+		candidateURI := fmt.Sprintf("mongodb://127.0.0.1:%d/?directConnection=true&serverSelectionTimeoutMS=10000", port)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err := waitForMongod(ctx, candidateURI, logPath, exited)
+		cancel()
+		if err == nil {
+			uri = candidateURI
+			t.Cleanup(func() {
+				proc.Kill() // exact PID only, never a name-matching pkill
+				<-exited    // reap via the single Wait() call above, not a second one
+			})
+			break
+		}
+
+		// This attempt didn't come up; make sure its process is fully
+		// gone before either retrying with a fresh port or giving up.
+		proc.Kill()
+		<-exited
+
+		if !looksLikePortConflict(logPath) {
+			t.Fatalf("mongod never became reachable: %v", err)
+		}
+		lastErr = err
+		t.Logf("mongod port %d appears to have been raced away before bind (attempt %d/%d), retrying with a new port: %v", port, attempt, maxPortAttempts, err)
+	}
+	if uri == "" {
+		t.Fatalf("mongod failed to bind a free port after %d attempts, each apparently lost to a port race: %v", maxPortAttempts, lastErr)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	waitForMongod(t, ctx, uri, logPath)
-
 	if replicaSetName != "" {
 		initiateReplicaSet(t, ctx, uri, replicaSetName, port)
 		uri = fmt.Sprintf("mongodb://127.0.0.1:%d/?replicaSet=%s&serverSelectionTimeoutMS=10000", port, replicaSetName)
@@ -115,11 +146,43 @@ func Start(t *testing.T, replicaSetName string) (uri string) {
 	return uri
 }
 
-func waitForMongod(t *testing.T, ctx context.Context, uri, logPath string) {
-	t.Helper()
+// looksLikePortConflict reports whether mongod's log indicates it failed
+// to start because its assigned port was already taken — the outcome of
+// freeTCPPort's TOCTOU window — as opposed to some unrelated startup
+// failure that retrying with a different port wouldn't fix. Matched
+// case-insensitively against a handful of message variants since mongod's
+// exact wording has drifted across versions/log formats (plain-text vs.
+// structured JSON logging).
+func looksLikePortConflict(logPath string) bool {
+	b, _ := os.ReadFile(logPath)
+	s := strings.ToLower(string(b))
+	for _, marker := range []string{
+		"address already in use",
+		"failed to set up listener",
+		"failed to set up sockets",
+		"error binding to port",
+	} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForMongod polls uri until mongod answers a Ping, the process exits
+// (signaled via exited, closed once), or ctx's 20-second deadline elapses
+// — returning an error describing whichever of those happened, with the
+// mongod log tail attached for diagnosis.
+func waitForMongod(ctx context.Context, uri, logPath string, exited <-chan struct{}) error {
 	deadline := time.Now().Add(20 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			logTail, _ := os.ReadFile(logPath)
+			return fmt.Errorf("mongod exited before becoming reachable (last ping error: %v)\nlog:\n%s", lastErr, truncateLog(logTail))
+		default:
+		}
 		func() {
 			pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
@@ -132,12 +195,12 @@ func waitForMongod(t *testing.T, ctx context.Context, uri, logPath string) {
 			lastErr = client.Ping(pingCtx, nil)
 		}()
 		if lastErr == nil {
-			return
+			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	logTail, _ := os.ReadFile(logPath)
-	t.Fatalf("mongod never became reachable at %s: %v\nlog:\n%s", uri, lastErr, truncateLog(logTail))
+	return fmt.Errorf("mongod never became reachable at %s: %v\nlog:\n%s", uri, lastErr, truncateLog(logTail))
 }
 
 func truncateLog(b []byte) []byte {

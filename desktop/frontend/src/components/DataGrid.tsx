@@ -28,6 +28,7 @@ interface Props {
 // divs with fixed column widths do.
 export function DataGrid({ columns, rows, editableColumns, onCellCommit, linkColumns, onLinkClick, onRowClick, selectedRowIndex }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headerScrollRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const [menu, setMenu] = useState<{ x: number; y: number; items: CellContextMenuItem[] } | null>(null);
 
@@ -67,7 +68,7 @@ export function DataGrid({ columns, rows, editableColumns, onCellCommit, linkCol
 
   return (
     <div className="data-grid">
-      <div className="data-grid-header-scroll">
+      <div className="data-grid-header-scroll" ref={headerScrollRef}>
         <div className="data-grid-header-row" style={{ width: totalWidth }}>
           {columns.map((col) => (
             <div key={col} className="data-grid-cell data-grid-header-cell mono" style={{ width: COL_WIDTH }}>
@@ -76,7 +77,18 @@ export function DataGrid({ columns, rows, editableColumns, onCellCommit, linkCol
           ))}
         </div>
       </div>
-      <div className="data-grid-body" ref={scrollRef}>
+      <div
+        className="data-grid-body"
+        ref={scrollRef}
+        onScroll={(e) => {
+          // The header lives in its own overflow-x:hidden container (a
+          // native <table>'s sticky header can't have its own
+          // independently-widthed row with this virtualized-rows layout),
+          // so nothing keeps it aligned with the body's horizontal scroll
+          // unless we mirror scrollLeft onto it here.
+          if (headerScrollRef.current) headerScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+        }}
+      >
         <div style={{ height: virtualizer.getTotalSize(), width: totalWidth, position: "relative" }}>
           {virtualizer.getVirtualItems().map((vRow) => {
             const row = rows[vRow.index];

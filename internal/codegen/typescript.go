@@ -1,11 +1,35 @@
 package codegen
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
+
+// validTSIdentifier matches a bare identifier that's safe to use
+// unquoted as a TypeScript interface property name.
+var validTSIdentifier = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+
+// tsPropertyName renders name as a TypeScript interface property key: a
+// bare identifier when name is one, otherwise a quoted string literal
+// (interfaces accept "any string" as a key, e.g. `"first name": string;`).
+// A column name is a legal quoted SQL identifier that can contain
+// characters — spaces, hyphens, a leading digit, even an embedded
+// newline — that aren't valid in a bare TypeScript identifier and would
+// otherwise produce a file that fails to parse. json.Marshal produces a
+// valid double-quoted TS/JS string literal for any Go string (JS string
+// literal escaping is a superset of JSON's), including turning a literal
+// newline into `\n` rather than emitting one into the source.
+func tsPropertyName(name string) string {
+	if validTSIdentifier.MatchString(name) {
+		return name
+	}
+	b, _ := json.Marshal(name)
+	return string(b)
+}
 
 func tsType(class sqlTypeClass) string {
 	switch class {
@@ -47,7 +71,7 @@ func GenerateTypeScript(schema engine.TableSchema, interfaceName string) string 
 		if comment != "" {
 			fmt.Fprintf(&sb, "  /**%s */\n", comment)
 		}
-		fmt.Fprintf(&sb, "  %s%s: %s;\n", c.Name, optional, typ)
+		fmt.Fprintf(&sb, "  %s%s: %s;\n", tsPropertyName(c.Name), optional, typ)
 	}
 	sb.WriteString("}\n")
 	return sb.String()

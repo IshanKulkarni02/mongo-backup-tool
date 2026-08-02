@@ -81,8 +81,10 @@ func (a *App) DeleteBackup(id string) error {
 	if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	idx.Remove(id)
-	return store.Save(dir, idx)
+	return store.Update(dir, func(idx *store.Index) error {
+		idx.Remove(id)
+		return nil
+	})
 }
 
 // runBackup mirrors cmd.RunBackup / internal/tui's identical helper. It's
@@ -117,19 +119,18 @@ func runBackup(connName, uri, dbName string) (string, error) {
 		size = info.Size()
 	}
 
-	idx, err := store.Load(backupsDir)
-	if err != nil {
-		return "", err
-	}
-	idx.Backups = append(idx.Backups, store.Backup{
-		ID:         id,
-		Connection: connName,
-		Database:   dbName,
-		FileName:   fileName,
-		SizeBytes:  size,
-		CreatedAt:  time.Now().Format(time.RFC3339),
+	err = store.Update(backupsDir, func(idx *store.Index) error {
+		idx.Backups = append(idx.Backups, store.Backup{
+			ID:         id,
+			Connection: connName,
+			Database:   dbName,
+			FileName:   fileName,
+			SizeBytes:  size,
+			CreatedAt:  time.Now().Format(time.RFC3339),
+		})
+		return nil
 	})
-	if err := store.Save(backupsDir, idx); err != nil {
+	if err != nil {
 		return "", err
 	}
 	return id, nil

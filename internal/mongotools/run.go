@@ -55,8 +55,26 @@ type RestoreOptions struct {
 	Drop        bool   // drop existing collections before restoring
 }
 
+// validateRestoreTargetDB rejects a TargetDB paired with an all-databases
+// backup (SourceDB == ""). That combination has no single source
+// namespace to remap --nsFrom/--nsTo away from, so TargetDB would
+// otherwise be silently ignored — mongorestore would restore every
+// database back into its original name regardless of TargetDB, and --drop
+// would then drop and overwrite the *original* databases instead of the
+// isolated copy the caller asked for.
+func validateRestoreTargetDB(opts RestoreOptions) error {
+	if opts.SourceDB == "" && opts.TargetDB != "" {
+		return fmt.Errorf("cannot restore an all-databases backup into a single target database %q — restore without a target database (every database keeps its original name), or use a backup taken with --db so its source database can be remapped", opts.TargetDB)
+	}
+	return nil
+}
+
 // Restore runs mongorestore against a gzip archive produced by Dump.
 func Restore(opts RestoreOptions) (*RunResult, error) {
+	if err := validateRestoreTargetDB(opts); err != nil {
+		return nil, err
+	}
+
 	bin, err := Find("mongorestore")
 	if err != nil {
 		return nil, err
