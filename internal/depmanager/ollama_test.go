@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -31,6 +33,133 @@ func TestCheckOllamaNotRunning(t *testing.T) {
 	status := CheckOllama(context.Background(), "")
 	if status.Running {
 		t.Fatalf("expected Running=false when nothing answers, got %+v", status)
+	}
+}
+
+// TestValidateInstallScript is the regression test for #36: the Ollama
+// Linux auto-install downloaded and piped a remote script straight into sh
+// with no check on what was actually received. validateInstallScript is
+// the sanity gate added to catch the common ways that download can go
+// wrong before any of it reaches a shell.
+func TestValidateInstallScript(t *testing.T) {
+	cases := []struct {
+		name    string
+		data    []byte
+		wantErr bool
+	}{
+		{"valid shebang script", []byte("#!/bin/sh\necho hi\n"), false},
+		{"leading whitespace before shebang", []byte("\n\n  #!/bin/sh\necho hi\n"), false},
+		{"empty body", []byte(""), true},
+		{"whitespace only", []byte("   \n\t  "), true},
+		{"html error page", []byte("<html><body>404 Not Found</body></html>"), true},
+		{"truncated body missing shebang", []byte("in/sh\necho hi\n"), true},
+		{"plain text no shebang", []byte("echo hi\n"), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := validateInstallScript(c.data)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("validateInstallScript(%q) error = %v, wantErr %v", c.data, err, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestDownloadOllamaInstallScriptRejectsInvalidContent confirms the
+// download path refuses to hand a bad response to sh: an HTML error page
+// (e.g. from a broken redirect or CDN failure) must be rejected rather
+// than written out as an executable script.
+func TestDownloadOllamaInstallScriptRejectsInvalidContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html><body>not the script you're looking for</body></html>"))
+	}))
+	defer srv.Close()
+
+	orig := ollamaInstallScriptURL
+	ollamaInstallScriptURL = srv.URL
+	defer func() { ollamaInstallScriptURL = orig }()
+
+	path, err := downloadOllamaInstallScript(context.Background())
+	if err == nil {
+		os.Remove(path)
+		t.Fatalf("expected an error for non-script content, got a script written to %q", path)
+	}
+	if !strings.Contains(err.Error(), "integrity check") {
+		t.Fatalf("expected an integrity-check error, got: %v", err)
+	}
+}
+
+// TestDownloadOllamaInstallScriptRejectsHTTPError confirms a non-200
+// response (e.g. a 404 after Ollama moves the script) is rejected instead
+// of writing the error body out as a script.
+func TestDownloadOllamaInstallScriptRejectsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	orig := ollamaInstallScriptURL
+	ollamaInstallScriptURL = srv.URL
+	defer func() { ollamaInstallScriptURL = orig }()
+
+	if _, err := downloadOllamaInstallScript(context.Background()); err == nil {
+		t.Fatal("expected an error for a non-200 response, got nil")
+	}
+}
+
+// TestDownloadOllamaInstallScriptWritesValidScript confirms the happy
+// path: a well-formed script is downloaded to a private temp file whose
+// content matches exactly what the server sent.
+func TestDownloadOllamaInstallScriptWritesValidScript(t *testing.T) {
+	const script = "#!/bin/sh\necho installing ollama\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(script))
+	}))
+	defer srv.Close()
+
+	orig := ollamaInstallScriptURL
+	ollamaInstallScriptURL = srv.URL
+	defer func() { ollamaInstallScriptURL = orig }()
+
+	path, err := downloadOllamaInstallScript(context.Background())
+	if err != nil {
+		t.Fatalf("downloadOllamaInstallScript failed: %v", err)
+	}
+	defer os.Remove(path)
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read downloaded script: %v", err)
+	}
+	if string(got) != script {
+		t.Fatalf("downloaded script content = %q, want %q", got, script)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to stat downloaded script: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("downloaded script has permissions %o, want 0700", perm)
+	}
+}
+
+// TestDownloadOllamaInstallScriptRejectsOversized confirms a response
+// larger than the expected size limit is rejected rather than silently
+// truncated and executed.
+func TestDownloadOllamaInstallScriptRejectsOversized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("#!/bin/sh\n"))
+		w.Write(make([]byte, maxOllamaInstallScriptSize+1))
+	}))
+	defer srv.Close()
+
+	orig := ollamaInstallScriptURL
+	ollamaInstallScriptURL = srv.URL
+	defer func() { ollamaInstallScriptURL = orig }()
+
+	if _, err := downloadOllamaInstallScript(context.Background()); err == nil {
+		t.Fatal("expected an error for an oversized response, got nil")
 	}
 }
 
