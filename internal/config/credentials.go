@@ -148,34 +148,53 @@ func DeleteCredential(conn Connection) {
 	}
 }
 
+// credentialCandidate records which of a connection's secrets looked
+// like they needed migrating *before* Save/stripCredentials ran, so
+// MigrateCredentials can check afterward whether each one actually made
+// it into the keyring rather than assuming success from the pre-migration
+// count.
+type credentialCandidate struct {
+	name                                 string
+	needsCred, needsSSHPass, needsSSHKey bool
+}
+
 // MigrateCredentials moves any plaintext passwords in the stored config
-// into the system keyring. It reports how many connections were migrated.
-// A no-op (0, nil) when no keyring is available or nothing needs moving.
-// Goes through Update so this (called from a startup goroutine) can't
-// lose an in-flight AddConnection/RemoveConnection/SwitchTenant call's
-// write, or have its own write lost to one of theirs.
+// into the system keyring. It reports how many connections were fully
+// migrated — verified by reloading the saved config and checking each
+// candidate connection's *Ref fields actually got set, not just the
+// pre-migration candidate count. setSecretVerified (called inside Save's
+// stripCredentials) can silently fail per-secret (a keyring write or
+// read-back mismatch) and, by design, just leaves the plaintext value in
+// place on failure without surfacing an error — so the pre-migration
+// count alone can't be trusted as "N credentials migrated." A no-op
+// (0, nil) when no keyring is available or nothing needs moving. Goes
+// through Update so this (called from a startup goroutine) can't lose an
+// in-flight AddConnection/RemoveConnection/SwitchTenant call's write, or
+// have its own write lost to one of theirs.
 func MigrateCredentials() (int, error) {
 	if !secrets.Available() {
 		return 0, nil
 	}
-	needs := 0
+	var candidates []credentialCandidate
 	err := Update(func(cfg *Config) error {
 		for _, c := range cfg.Connections {
+			cand := credentialCandidate{name: c.Name}
 			if c.CredentialRef == "" {
 				if _, _, ok := splitPassword(c.URI); ok {
-					needs++
-					continue
+					cand.needsCred = true
 				}
 			}
 			if c.SSHPasswordRef == "" && c.SSHPassword != "" {
-				needs++
-				continue
+				cand.needsSSHPass = true
 			}
 			if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
-				needs++
+				cand.needsSSHKey = true
+			}
+			if cand.needsCred || cand.needsSSHPass || cand.needsSSHKey {
+				candidates = append(candidates, cand)
 			}
 		}
-		if needs == 0 {
+		if len(candidates) == 0 {
 			return errNoChange
 		}
 		return nil
@@ -183,7 +202,32 @@ func MigrateCredentials() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return needs, nil
+	if len(candidates) == 0 {
+		return 0, nil
+	}
+
+	after, err := Load()
+	if err != nil {
+		return 0, err
+	}
+	migrated := 0
+	for _, cand := range candidates {
+		c, ok := after.Find(cand.name)
+		if !ok {
+			continue
+		}
+		if cand.needsCred && c.CredentialRef == "" {
+			continue
+		}
+		if cand.needsSSHPass && c.SSHPasswordRef == "" {
+			continue
+		}
+		if cand.needsSSHKey && c.SSHPrivateKeyRef == "" {
+			continue
+		}
+		migrated++
+	}
+	return migrated, nil
 }
 
 // RedactURI masks a URI's password for safe display.
