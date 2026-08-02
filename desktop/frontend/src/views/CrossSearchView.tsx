@@ -61,8 +61,15 @@ export function CrossSearchView() {
     if (!term.trim()) return;
     setResults(null);
     setError("");
-    const id = await RunCrossDatabaseSearch(term.trim());
-    setJobId(id);
+    try {
+      const id = await RunCrossDatabaseSearch(term.trim());
+      setJobId(id);
+    } catch (e) {
+      // Without this, a rejection here left jobId unset (so `running`
+      // stayed false) but the already-cleared error was never
+      // repopulated — the Search button silently did nothing.
+      setError(String(e));
+    }
   }
 
   function cancel() {

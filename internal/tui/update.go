@@ -72,6 +72,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case connectionSavedMsg:
 		if msg.err != nil {
+			// Route back to the form (left at screenProgress since Enter
+			// was pressed) so the user sees the error and can fix/retry.
+			m.screen = screenAddConnection
 			m.addErr = msg.err.Error()
 			return m, nil
 		}

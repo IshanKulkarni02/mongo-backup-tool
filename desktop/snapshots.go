@@ -93,13 +93,20 @@ func (a *App) DiffSnapshots(connectionName, database, fromID, toID string) (Diff
 		return DiffSummaryResult{}, err
 	}
 	defer scope.Close()
-	toManifest, toSource := to, scope.Source(to.ID)
+
+	// live is non-nil (and to is nil) exactly when toID == "" — the
+	// documented "diff against the live database" path — so live must be
+	// checked before to.ID is ever dereferenced.
 	if live != nil {
 		defer live.Close()
-		toManifest, toSource = live.Manifest, live.Source()
+		diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), live.Manifest, live.Source())
+		if err != nil {
+			return DiffSummaryResult{}, err
+		}
+		return summarizeDiff(diff), nil
 	}
 
-	diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), toManifest, toSource)
+	diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), to, scope.Source(to.ID))
 	if err != nil {
 		return DiffSummaryResult{}, err
 	}
@@ -145,13 +152,18 @@ func (a *App) DiffCollectionChanges(connectionName, database, fromID, toID, coll
 		return DiffChangePage{}, err
 	}
 	defer scope.Close()
-	toSource := scope.Source(to.ID)
+
+	// live is non-nil (and to is nil) exactly when toID == "" — the
+	// documented "diff against the live database" path — so live must be
+	// checked before to.ID is ever dereferenced.
+	var ids []string
+	var total int
 	if live != nil {
 		defer live.Close()
-		toSource = live.Source()
+		ids, total, err = snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), live.Source(), collection, ct, offset, limit)
+	} else {
+		ids, total, err = snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), scope.Source(to.ID), collection, ct, offset, limit)
 	}
-
-	ids, total, err := snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), toSource, collection, ct, offset, limit)
 	if err != nil {
 		return DiffChangePage{}, err
 	}

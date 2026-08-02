@@ -66,10 +66,18 @@ export function SnapshotsView() {
 
   const loadSnapshots = useCallback(() => {
     if (!connection || !database) return;
-    ListSnapshots(connection, database).then((items) => {
-      setSnapshots(items);
-      if (items.length > 0) setCompareFrom((prev) => prev || items[items.length - 1].id);
-    });
+    ListSnapshots(connection, database)
+      .then((items) => {
+        setSnapshots(items);
+        if (items.length > 0) setCompareFrom((prev) => prev || items[items.length - 1].id);
+      })
+      .catch((e) => {
+        // Without this, snapshots stayed null forever on failure —
+        // stuck on the loading Skeleton rows with no error shown.
+        setSnapshots([]);
+        toast.push("error", String(e));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database]);
 
   useEffect(() => {

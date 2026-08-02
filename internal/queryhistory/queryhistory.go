@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // maxEntries caps how many history entries are kept, oldest dropped first,
@@ -56,14 +57,58 @@ func Load(configDir string) (*Store, error) {
 	return &s, nil
 }
 
-// Save writes the store.
+// Save writes the store via a temp file + rename, so a crash mid-write
+// can never corrupt queryhistory.json into something the next Load can't
+// parse.
 func Save(configDir string, s *Store) error {
 	path := indexPath(configDir)
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data, 0o644)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// updateMu serializes Update calls so a full load-mutate-save sequence on
+// queryhistory.json can't interleave with another one — Wails dispatches
+// every RunSQLQuery/RunSQLExecute call (each of which appends a history
+// entry via recordQueryHistory) in its own goroutine, so two queries
+// finishing close together would otherwise race on the same file.
+var updateMu sync.Mutex
+
+// Update loads the store, applies mutate to it, and saves the result,
+// holding a package-level lock for the whole sequence.
+func Update(configDir string, mutate func(*Store) error) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	s, err := Load(configDir)
+	if err != nil {
+		return err
+	}
+	if err := mutate(s); err != nil {
+		return err
+	}
+	return Save(configDir, s)
 }
 
 // Append prepends a new entry (most recent first) and truncates to
