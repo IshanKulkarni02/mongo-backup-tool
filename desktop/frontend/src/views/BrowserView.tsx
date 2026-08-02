@@ -77,15 +77,22 @@ export function BrowserView({
   const toast = useToast();
 
   useEffect(() => {
-    ListConnections().then((conns) => {
-      setConnections(conns);
-      if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
-        setConnection(pendingTarget.connection);
-      } else if (conns.length > 0) {
-        setConnection(conns[0].name);
-      }
-      onConsumeInitialTarget?.();
-    });
+    ListConnections()
+      .then((conns) => {
+        setConnections(conns);
+        if (pendingTarget && conns.some((c) => c.name === pendingTarget.connection)) {
+          setConnection(pendingTarget.connection);
+        } else if (conns.length > 0) {
+          setConnection(conns[0].name);
+        }
+      })
+      .catch((e) => {
+        // Without this, a rejection here left onConsumeInitialTarget
+        // uncalled — the parent's pending openTarget state would dangle
+        // forever, on top of the connections list silently staying empty.
+        toast.push("error", String(e));
+      })
+      .finally(() => onConsumeInitialTarget?.());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -136,7 +143,7 @@ export function BrowserView({
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">{beginner ? "My Data" : "Browser"}</h1>
+        <h1 className="view-title">{beginner ? "My Documents" : "Browser"}</h1>
       </div>
 
       <div className="scope-picker">
@@ -377,7 +384,18 @@ function DocumentsPanel({
     try {
       await DeleteDocument(connection, database, collection, deleteTarget);
       toast.push("success", beginner ? "Record deleted" : "Document deleted");
-      runQuery();
+      // Deleting the last document(s) on a page can leave `skip` pointing
+      // past the new (smaller) total — clamp it back onto a valid page so
+      // the grid doesn't end up empty with a nonsensical "26-25 of 25"
+      // range. Clamping triggers the [skip]-keyed effect to refetch; if it
+      // doesn't change, refetch here instead.
+      const newTotal = Math.max(0, (result?.total ?? 1) - 1);
+      const clampedSkip = Math.max(0, Math.min(skip, newTotal - PAGE_SIZE));
+      if (clampedSkip !== skip) {
+        setSkip(clampedSkip);
+      } else {
+        runQuery();
+      }
       onMutated();
     } catch (e) {
       toast.push("error", String(e));

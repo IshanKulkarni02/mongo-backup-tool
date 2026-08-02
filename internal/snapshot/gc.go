@@ -126,22 +126,39 @@ func gcLocked(scope string, backend Backend, opts GCOptions) (*GCResult, error) 
 
 	result := &GCResult{AbandonedRecovered: abandonedRecovered}
 	var kept []Summary
+	var pruned []string
 	for _, s := range idx.Snapshots {
 		if keep[s.ID] {
 			kept = append(kept, s)
 			continue
 		}
-		if err := deleteManifest(scope, s.ID); err != nil {
-			return nil, err
-		}
-		if err := backend.DeleteDocRefs(s.ID); err != nil {
-			return nil, err
-		}
-		result.ManifestsDeleted++
+		pruned = append(pruned, s.ID)
 	}
+
+	// Remove the pruned snapshots from the index and persist that *before*
+	// touching any of their files on disk. If deleting a manifest or its
+	// doc-refs then fails partway through the loop below, the affected
+	// snapshot is already unindexed — exactly the "abandoned manifest"
+	// shape recoverAbandonedManifests already knows how to finish cleaning
+	// up on the next GC pass. Doing it the other way around (as before)
+	// left a manifest deleted-but-still-indexed on a partial failure,
+	// which recoverAbandonedManifests's unindexed-only check can never
+	// recover: any later diff/restore/log against that snapshot ID would
+	// fail on a missing manifest instead of the snapshot simply not
+	// existing.
 	idx.Snapshots = kept
 	if err := saveIndex(scope, idx); err != nil {
 		return nil, err
+	}
+
+	for _, id := range pruned {
+		if err := backend.DeleteDocRefs(id); err != nil {
+			return nil, err
+		}
+		if err := deleteManifest(scope, id); err != nil {
+			return nil, err
+		}
+		result.ManifestsDeleted++
 	}
 
 	// Mark every hash still referenced by a kept snapshot. Streamed via the
