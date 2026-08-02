@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/textinput"
+
+	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
 )
 
 func addConnectionModel(name, uri string) Model {
@@ -107,6 +109,43 @@ func TestConnectionSavedMsgGoesToConnectionsOnSuccess(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected loadConnectionsCmd to be dispatched after a successful save")
+	}
+}
+
+// TestConnectionSavedMsgSetsWarningWithoutKeyring is the regression test
+// for #61: the CLI already warns on `connection add`/`list` when no OS
+// keyring is available, but the TUI's own add-connection flow persisted
+// credentials in plaintext with no equivalent warning shown anywhere.
+func TestConnectionSavedMsgSetsWarningWithoutKeyring(t *testing.T) {
+	secrets.MockUnavailable()
+	t.Cleanup(secrets.ResetForTesting)
+
+	m := addConnectionModel("local", "mongodb://localhost:27017")
+	m.screen = screenProgress
+
+	next, _ := m.Update(connectionSavedMsg{})
+	nm := next.(Model)
+
+	if nm.connWarning == "" {
+		t.Fatal("expected connWarning to be set after a successful save with no keyring available")
+	}
+}
+
+// TestConnectionSavedMsgNoWarningWithKeyring confirms the warning is only
+// shown when it's actually true — a successful save with a working
+// keyring must not scare the user with a plaintext-storage warning.
+func TestConnectionSavedMsgNoWarningWithKeyring(t *testing.T) {
+	secrets.MockInit()
+	t.Cleanup(secrets.ResetForTesting)
+
+	m := addConnectionModel("local", "mongodb://localhost:27017")
+	m.screen = screenProgress
+
+	next, _ := m.Update(connectionSavedMsg{})
+	nm := next.(Model)
+
+	if nm.connWarning != "" {
+		t.Fatalf("expected no connWarning with a working keyring, got %q", nm.connWarning)
 	}
 }
 
