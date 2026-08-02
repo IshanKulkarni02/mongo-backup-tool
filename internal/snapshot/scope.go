@@ -68,9 +68,18 @@ func scopeDir(connection, database string) (string, error) {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		legacy := filepath.Join(root, fmt.Sprintf("%s__%s", sanitize(connection), sanitize(database)))
 		if _, legacyErr := os.Stat(legacy); legacyErr == nil {
-			if err := os.Rename(legacy, dir); err != nil {
+			if err := os.Rename(legacy, dir); err != nil && !os.IsNotExist(err) {
 				return "", fmt.Errorf("migrating legacy snapshot scope directory %s to %s: %w", legacy, dir, err)
 			}
+			// os.IsNotExist(err) here means legacy vanished between our
+			// os.Stat above and this Rename — another process (the CLI and
+			// the desktop app, say, both opening the same connection+
+			// database right after upgrading to the hash-suffixed naming
+			// scheme) already migrated it first. The scope is now
+			// perfectly usable at dir, so fall through to MkdirAll below
+			// instead of failing with a "no such file or directory" error
+			// for a migration that, from this process's perspective,
+			// already succeeded.
 		}
 	}
 

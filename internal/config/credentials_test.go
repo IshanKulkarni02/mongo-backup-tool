@@ -279,3 +279,49 @@ func TestRedactURIMasksPassword(t *testing.T) {
 		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
 	}
 }
+
+// TestRedactURIPreservesQueryStringPercentEncoding is the regression
+// test for #29: RedactURI's blanket strings.ReplaceAll(u.String(),
+// "%2A", "*") to undo Go's percent-encoding of the "*" mask it just
+// inserted into userinfo also corrupted any pre-existing %2A sequence
+// elsewhere in the URI — e.g. a percent-encoded literal "*" in a query
+// value, plausible for an API token or webhook secret — since net/url
+// preserves RawQuery byte-for-byte. The exact repro from the issue:
+// "postgres://user:pass@host/db?token=abc%2Adef" must keep its query
+// string exactly as-is, with only the password masked.
+func TestRedactURIPreservesQueryStringPercentEncoding(t *testing.T) {
+	got := RedactURI("postgres://user:pass@host/db?token=abc%2Adef")
+	want := "postgres://user:****@host/db?token=abc%2Adef"
+	if got != want {
+		t.Fatalf("RedactURI corrupted the query string:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// TestRedactURIMasksAsteriskPassword confirms the original purpose of
+// the %2A-undoing logic still works: a password consisting of literal
+// asterisks (or containing one) must still be masked as **** rather
+// than the percent-encoded %2A%2A%2A%2A leaking through unmasked, now
+// that the fix scopes the un-escaping to just the userinfo segment.
+func TestRedactURIMasksAsteriskPassword(t *testing.T) {
+	got := RedactURI("mongodb://user:****@localhost:27017")
+	if strings.Contains(got, "%2A") {
+		t.Fatalf("expected the mask itself to read as **** not %%2A%%2A%%2A%%2A, got %q", got)
+	}
+	if !strings.Contains(got, "****") {
+		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
+	}
+}
+
+// TestRedactURIMasksPasswordContainingAt confirms a password containing
+// a literal "@" (percent-encoded as %40 by net/url, and thus the only
+// thing that could make the userinfo/host split ambiguous) doesn't
+// break the redaction — the mask still replaces it entirely regardless.
+func TestRedactURIMasksPasswordContainingAt(t *testing.T) {
+	got := RedactURI("postgres://user:p@ssword@host/db")
+	if strings.Contains(got, "p@ssword") || strings.Contains(got, "p%40ssword") {
+		t.Fatalf("expected the password to be fully masked, got %q", got)
+	}
+	if !strings.Contains(got, "****") {
+		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
+	}
+}

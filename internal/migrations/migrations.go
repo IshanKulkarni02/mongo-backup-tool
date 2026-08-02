@@ -65,6 +65,10 @@ func Save(folder, name, sql, commitMessage string) (SaveResult, error) {
 	out, err := runGit(folder, "commit", "-m", commitMessage)
 	result.GitOutput = out
 	if err != nil {
+		// Undo the "git add" above so the file isn't left staged and later
+		// swept into an unrelated commit — best-effort: if the unstage
+		// itself fails, the original commit error is still what's reported.
+		runGit(folder, "restore", "--staged", "--", filename)
 		return result, fmt.Errorf("git commit: %w\n%s", err, out)
 	}
 	result.Committed = true

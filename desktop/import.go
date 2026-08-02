@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -65,7 +66,12 @@ func importLiteral(value string) string {
 }
 
 // ImportCSV bulk-inserts a CSV file's rows into table, one INSERT per row.
-// columnMapping maps table column name -> CSV header name; unmapped table
+// When hasHeaderRow is true, columnMapping maps table column name -> CSV
+// header name (matched against the file's first row). When it's false,
+// there's no header text to match against, so columnMapping instead maps
+// table column name -> the CSV column's 0-based positional index as a
+// decimal string (e.g. "0", "1") — the frontend builds it this way when
+// the "first row is a header" checkbox is unchecked. Unmapped table
 // columns are left out of each INSERT so column defaults apply. Requires
 // the connection to be writable, gated the same as RunSQLExecute, since
 // this is a write path over an engine.SQLSession.Execute — which takes a
@@ -103,10 +109,20 @@ func (a *App) ImportCSV(connectionName, database, table, csvPath, engineID strin
 		csvIndex int
 	}
 	mapped := make([]mapping, 0, len(columnMapping))
-	for tableCol, csvHeader := range columnMapping {
-		idx, ok := csvIndexByHeader[csvHeader]
-		if !ok {
-			return 0, fmt.Errorf("mapped CSV column %q not found in the file's header", csvHeader)
+	for tableCol, csvField := range columnMapping {
+		var idx int
+		if hasHeaderRow {
+			var ok bool
+			idx, ok = csvIndexByHeader[csvField]
+			if !ok {
+				return 0, fmt.Errorf("mapped CSV column %q not found in the file's header", csvField)
+			}
+		} else {
+			var err error
+			idx, err = strconv.Atoi(csvField)
+			if err != nil || idx < 0 {
+				return 0, fmt.Errorf("invalid CSV column position %q for column %q", csvField, tableCol)
+			}
 		}
 		mapped = append(mapped, mapping{tableCol: tableCol, csvIndex: idx})
 	}

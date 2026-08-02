@@ -27,7 +27,8 @@ import { Select } from "../components/Select";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { useToast } from "../components/Toast";
 import { useUIMode } from "../lib/uiMode";
-import { quoteIdent, sqlLiteral, buildSelectList } from "../lib/sql";
+import { quoteIdent, sqlLiteral, sqlValueForCell, buildSelectList } from "../lib/sql";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./TableView.css";
 import "./WebhookView.css"; // shares the mapping-row layout ImportCSVModal reuses
@@ -96,13 +97,17 @@ export function TableView({
   }, []);
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
+  const startDatabasesRequest = useStaleGuard();
+  const startTablesRequest = useStaleGuard();
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
       .then((dbs) => {
+        if (isStale()) return;
         setDatabases(dbs);
         if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
           setDatabase(pendingTarget.database);
@@ -110,15 +115,22 @@ export function TableView({
           setDatabase(dbs[0]);
         }
       })
-      .catch((e) => toast.push("error", String(e)));
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   const loadTables = useCallback(() => {
     if (!connection || !database) return;
+    const isStale = startTablesRequest();
     ListTables(connection, database)
-      .then(setTables)
-      .catch((e) => toast.push("error", String(e)));
+      .then((infos) => {
+        if (!isStale()) setTables(infos);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database]);
 
@@ -132,7 +144,7 @@ export function TableView({
   return (
     <div>
       <div className="view-header">
-        <h1 className="view-title">{beginner ? "My Data" : "Tables"}</h1>
+        <h1 className="view-title">{beginner ? "My Tables" : "Tables"}</h1>
       </div>
 
       {connections.length === 0 ? (
@@ -250,7 +262,7 @@ function RowsPanel({
     // rowFilter narrows to the single referenced row after a foreign-key
     // click navigated here — same query shape, just WHERE-qualified.
     const whereClause = rowFilter
-      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlLiteral(rowFilter.cell.display, rowFilter.cell.type)}`
+      ? ` WHERE ${quoteIdent(engineId, rowFilter.column)} = ${sqlValueForCell(rowFilter.cell, engineId)}`
       : "";
     RunSQLQuery(connection, database, `SELECT ${cols} FROM ${ident}${whereClause} LIMIT ${ROW_LIMIT}`)
       .then(setResult)
@@ -290,8 +302,12 @@ function RowsPanel({
     const pkCell = result.rows[rowIndex][pkCol];
     if (!pkCell) return;
     const ident = quoteIdent(engineId, table);
-    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string")}`;
-    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    // newDisplay is always a literal edited value, never inferred as
+    // NULL from its text content (see sqlLiteral/sqlValueForCell) — a
+    // column that legitimately stores the string "null" must be settable
+    // to exactly that.
+    const setClause = `${quoteIdent(engineId, column)} = ${sqlLiteral(newDisplay, cell?.type ?? "string", engineId)}`;
+    const whereClause = `${quoteIdent(engineId, pkCol)} = ${sqlValueForCell(pkCell, engineId)}`;
     try {
       // Always a WHERE-qualified single-row UPDATE, so it's never
       // classified Safe-Mode-dangerous — the confirm param only matters
@@ -535,18 +551,34 @@ function ImportCSVModal({
     setPath(p);
     setError("");
     try {
+      // Read regardless of hasHeaderRow: with no header, this first row is
+      // still needed as a preview to know how many CSV columns there are.
       const h = await ReadCSVHeader(p);
       setHeader(h);
       const nextMapping: Record<string, string> = {};
-      for (const col of schema?.columns ?? []) {
-        const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
-        if (match) nextMapping[col.name] = match;
+      if (hasHeaderRow) {
+        for (const col of schema?.columns ?? []) {
+          const match = h.find((k) => k.toLowerCase() === col.name.toLowerCase());
+          if (match) nextMapping[col.name] = match;
+        }
       }
       setMapping(nextMapping);
     } catch (e) {
       setError(String(e));
     }
   }
+
+  // With no header row, there's no header text to map against — the
+  // mapping value sent to ImportCSV is instead the CSV column's 0-based
+  // positional index (as a string), matching ImportCSV's contract.
+  function toggleHasHeaderRow(v: boolean) {
+    setHasHeaderRow(v);
+    setMapping({});
+  }
+
+  const csvColumnOptions = hasHeaderRow
+    ? header.map((h) => ({ value: h, label: h }))
+    : header.map((_, i) => ({ value: String(i), label: `Column ${i + 1} (e.g. "${header[i]}")` }));
 
   async function submit() {
     if (Object.keys(mapping).length === 0) {
@@ -591,13 +623,13 @@ function ImportCSVModal({
       {path && (
         <div className="field">
           <label className="field-label">
-            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => setHasHeaderRow(e.target.checked)} /> First row is a
+            <input type="checkbox" checked={hasHeaderRow} onChange={(e) => toggleHasHeaderRow(e.target.checked)} /> First row is a
             header
           </label>
         </div>
       )}
       {path && !hasHeaderRow && (
-        <div className="query-error">Uncheck only if the file has no header row — column mapping needs header names to match against.</div>
+        <div className="field-hint">No header row: map each table column to a CSV position below (every row, including the first, is imported as data).</div>
       )}
       {path && header.length > 0 && (
         <div className="field">
@@ -611,7 +643,7 @@ function ImportCSVModal({
                   value={mapping[c.name] ?? ""}
                   onChange={(v) => setMapping((m) => ({ ...m, [c.name]: v }))}
                   placeholder="(skip)"
-                  options={header.map((h) => ({ value: h, label: h }))}
+                  options={csvColumnOptions}
                 />
               </div>
             ))}
@@ -643,18 +675,29 @@ function RelationshipInspector({
   const [counts, setCounts] = useState<Record<string, number | "error">>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [childRows, setChildRows] = useState<engine.SQLResult | null>(null);
+  const startCountsRequest = useStaleGuard();
+  const startExpandRequest = useStaleGuard();
 
   useEffect(() => {
     if (!pkCell) return;
+    // One guard call covers every request this effect run fires (one per
+    // referencing table) — selecting a different row before any of them
+    // resolve must discard all of this run's responses together, not
+    // just the first one to land.
+    const isStale = startCountsRequest();
     setCounts({});
     setExpanded(null);
     setChildRows(null);
     referencingTables.forEach((ref) => {
       const ident = quoteIdent(engineId, ref.table);
-      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+      const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlValueForCell(pkCell, engineId)}`;
       RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`)
-        .then((r) => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length })))
-        .catch(() => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" })));
+        .then((r) => {
+          if (!isStale()) setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length }));
+        })
+        .catch(() => {
+          if (!isStale()) setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" }));
+        });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, engineId, pkCell?.display, referencingTables]);
@@ -666,13 +709,14 @@ function RelationshipInspector({
       setChildRows(null);
       return;
     }
+    const isStale = startExpandRequest();
     setExpanded(key);
     setChildRows(null);
     if (!pkCell) return;
     const ident = quoteIdent(engineId, ref.table);
-    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type)}`;
+    const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
-    setChildRows(r);
+    if (!isStale()) setChildRows(r);
   }
 
   if (referencingTables.length === 0 || !pkCell) return null;

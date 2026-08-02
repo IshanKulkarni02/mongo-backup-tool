@@ -20,7 +20,7 @@ export function CancelJob(arg1:string):Promise<boolean>;
 
 export function CheckDependencies():Promise<Array<main.DependencyStatus>>;
 
-export function CheckOllama():Promise<depmanager.OllamaStatus>;
+export function CheckOllama(arg1:string):Promise<depmanager.OllamaStatus>;
 
 export function ClassifySQL(arg1:string):Promise<safeguard.Classification>;
 
@@ -170,7 +170,7 @@ export function SaveWidget(arg1:string,arg2:string,arg3:string,arg4:string,arg5:
 
 export function SecureCredentialStorageAvailable():Promise<boolean>;
 
-export function StartWebhookListener(arg1:number):Promise<string>;
+export function StartWebhookListener(arg1:number):Promise<main.WebhookListenerInfo>;
 
 export function StopWebhookListener():Promise<void>;
 

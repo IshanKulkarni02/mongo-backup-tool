@@ -7,6 +7,7 @@ import { main, engine } from "../../wailsjs/go/models";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { Select } from "../components/Select";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./ERDiagramView.css";
 
 interface TableWithSchema {
@@ -159,6 +160,8 @@ export function ERDiagramView() {
   const [database, setDatabase] = useState("");
   const [tables, setTables] = useState<TableWithSchema[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const startDatabasesRequest = useStaleGuard();
+  const startTablesRequest = useStaleGuard();
 
   useEffect(() => {
     ListConnections().then((conns) => {
@@ -170,9 +173,11 @@ export function ERDiagramView() {
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
     TestConnection(connection).then((dbs) => {
+      if (isStale()) return;
       setDatabases(dbs);
       if (dbs.length > 0) setDatabase(dbs[0]);
     });
@@ -183,16 +188,21 @@ export function ERDiagramView() {
       setTables(null);
       return;
     }
+    const isStale = startTablesRequest();
     setLoading(true);
     ListTables(connection, database)
       .then(async (infos) => {
         const withSchema = await Promise.all(
           infos.map(async (info) => ({ name: info.name, schema: await GetTableSchema(connection, database, info.name) }))
         );
-        setTables(withSchema);
+        if (!isStale()) setTables(withSchema);
       })
-      .catch(() => setTables([]))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!isStale()) setTables([]);
+      })
+      .finally(() => {
+        if (!isStale()) setLoading(false);
+      });
   }, [connection, database]);
 
   const graph = useMemo(() => (tables && tables.length > 0 ? buildGraph(tables) : null), [tables]);

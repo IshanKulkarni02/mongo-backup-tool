@@ -18,8 +18,8 @@ export function CheckDependencies() {
   return window['go']['main']['App']['CheckDependencies']();
 }
 
-export function CheckOllama() {
-  return window['go']['main']['App']['CheckOllama']();
+export function CheckOllama(arg1) {
+  return window['go']['main']['App']['CheckOllama'](arg1);
 }
 
 export function ClassifySQL(arg1) {
