@@ -224,18 +224,30 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
   useEffect(() => {
     if (!connection) return;
     const isStale = startDatabasesRequest();
-    TestConnection(connection).then((dbs) => {
-      if (isStale()) return;
-      setDatabases(dbs);
-      if (dbs.length > 0) setDatabase(dbs[0]);
-    });
+    TestConnection(connection)
+      .then((dbs) => {
+        if (isStale()) return;
+        setDatabases(dbs);
+        if (dbs.length > 0) setDatabase(dbs[0]);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
   }, [connection]);
 
   useEffect(() => {
     if (!connection || !database) return;
     const isStale = startCollectionsTablesRequest();
-    if (isMongo) ListCollections(connection, database).then((cols) => { if (!isStale()) setCollections(cols); });
-    if (isSQL) ListTables(connection, database).then((tbls) => { if (!isStale()) setTables(tbls); });
+    if (isMongo) {
+      ListCollections(connection, database)
+        .then((cols) => { if (!isStale()) setCollections(cols); })
+        .catch((e) => { if (!isStale()) toast.push("error", String(e)); });
+    }
+    if (isSQL) {
+      ListTables(connection, database)
+        .then((tbls) => { if (!isStale()) setTables(tbls); })
+        .catch((e) => { if (!isStale()) toast.push("error", String(e)); });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, activeEngine]);
 
@@ -250,18 +262,22 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
     // "customers" — submitSQL would otherwise build an INSERT INTO
     // customers (...) using column names from orders' schema.
     const isStale = startSchemaRequest();
-    GetTableSchema(connection, database, table).then((s) => {
-      if (isStale()) return;
-      setSchema(s);
-      // Pre-fill the mapping with case-insensitive name matches between
-      // the payload's top-level keys and the table's columns.
-      const nextMapping: Record<string, string> = {};
-      for (const col of s.columns) {
-        const match = fieldKeys.find((k) => k.toLowerCase() === col.name.toLowerCase());
-        if (match) nextMapping[col.name] = match;
-      }
-      setMapping(nextMapping);
-    });
+    GetTableSchema(connection, database, table)
+      .then((s) => {
+        if (isStale()) return;
+        setSchema(s);
+        // Pre-fill the mapping with case-insensitive name matches between
+        // the payload's top-level keys and the table's columns.
+        const nextMapping: Record<string, string> = {};
+        for (const col of s.columns) {
+          const match = fieldKeys.find((k) => k.toLowerCase() === col.name.toLowerCase());
+          if (match) nextMapping[col.name] = match;
+        }
+        setMapping(nextMapping);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSQL, connection, database, table]);
 
