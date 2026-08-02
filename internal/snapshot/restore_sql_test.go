@@ -2,8 +2,39 @@ package snapshot
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+// TestIsAlreadyExistsError guards against #23: a blanket
+// strings.Contains(msg, "duplicate") also matched unrelated errors where
+// CREATE UNIQUE INDEX fails because existing row data violates the new
+// constraint — a real data problem, not "index already exists" — and
+// recreateSQLIndexes silently swallowed those too, leaving the restore
+// reporting success with the index never recreated and the underlying
+// duplicate-data problem hidden.
+func TestIsAlreadyExistsError(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{"postgres already exists", `pq: relation "idx_name" already exists`, true},
+		{"sqlite already exists", `index idx_name already exists`, true},
+		{"mysql already exists", `Error 1061 (42000): Duplicate key name 'idx_name'`, true},
+
+		// Real data problems that must NOT be swallowed as "already exists".
+		{"mysql duplicate row data", `Error 1062 (23000): Duplicate entry 'x' for key 'y'`, false},
+		{"postgres duplicate row data", `pq: could not create unique index "idx_name" (SQLSTATE 23505): Key (col)=(x) is duplicated.`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isAlreadyExistsError(errors.New(c.msg)); got != c.want {
+				t.Errorf("isAlreadyExistsError(%q) = %v, want %v", c.msg, got, c.want)
+			}
+		})
+	}
+}
 
 // TestSQLStringLiteral guards against #16: MySQL treats \ as an escape
 // character inside a single-quoted string literal by default, so a
