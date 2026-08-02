@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -96,11 +98,13 @@ func defaultFallbackDirs() []string {
 		// MongoDB installs versioned dirs like "MongoDB\Tools\100.10.0\bin".
 		base := filepath.Join(programFiles, "MongoDB", "Tools")
 		if entries, err := os.ReadDir(base); err == nil {
+			var versions []string
 			for _, e := range entries {
 				if e.IsDir() {
-					dirs = append(dirs, filepath.Join(base, e.Name(), "bin"))
+					versions = append(versions, e.Name())
 				}
 			}
+			dirs = append(dirs, versionBinDirsNewestFirst(base, versions)...)
 		}
 		if local := os.Getenv("LOCALAPPDATA"); local != "" {
 			dirs = append(dirs, filepath.Join(local, "Programs", "mongodb-database-tools", "bin"))
@@ -119,4 +123,53 @@ func defaultFallbackDirs() []string {
 			filepath.Join(home, ".local", "bin"),
 		}
 	}
+}
+
+// versionBinDirsNewestFirst maps version directory names (e.g. "100.9.0")
+// under base to their "bin" subdirectories, ordered newest-first. Find's
+// caller returns the first existing candidate it finds among fallbackDirs'
+// results, so the order here directly determines which installed version
+// gets picked when more than one is present side by side: os.ReadDir's
+// lexicographic order gets this wrong for some version pairs (e.g.
+// "100.1.0" sorts before "100.10.0" as a string, even though 100.10.0 is
+// newer), silently preferring an older install over a newer one. Pulled
+// out of fallbackDirs so the ordering logic can be unit tested directly,
+// independent of runtime.GOOS.
+func versionBinDirsNewestFirst(base string, versions []string) []string {
+	sorted := append([]string(nil), versions...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return compareVersions(sorted[i], sorted[j]) > 0
+	})
+	dirs := make([]string, len(sorted))
+	for i, v := range sorted {
+		dirs[i] = filepath.Join(base, v, "bin")
+	}
+	return dirs
+}
+
+// compareVersions compares two dot-separated numeric version strings
+// (e.g. "100.10.0" vs "100.9.0") component by component as integers, and
+// reports whether a is newer than, equal to, or older than b (positive,
+// zero, or negative, mirroring strings.Compare's convention). A plain
+// lexicographic string comparison gets this wrong whenever two version
+// segments differ in digit count — "100.10.0" < "100.9.0" as strings,
+// even though 10 > 9. A component that isn't purely numeric is treated
+// as 0 rather than erroring, since this only ever compares directory
+// names already expected to look like versions.
+func compareVersions(a, b string) int {
+	as := strings.Split(a, ".")
+	bs := strings.Split(b, ".")
+	for i := 0; i < len(as) || i < len(bs); i++ {
+		var av, bv int
+		if i < len(as) {
+			av, _ = strconv.Atoi(as[i])
+		}
+		if i < len(bs) {
+			bv, _ = strconv.Atoi(bs[i])
+		}
+		if av != bv {
+			return av - bv
+		}
+	}
+	return 0
 }
