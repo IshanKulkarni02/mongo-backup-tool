@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -58,6 +59,64 @@ func TestOpenBackendPersistsKindAcrossReopen(t *testing.T) {
 	defer b2.Close()
 	if _, ok := b2.(*fsBackend); !ok {
 		t.Fatalf("OpenBackend on reopen returned %T, want *fsBackend", b2)
+	}
+}
+
+// TestOpenBackendConcurrentFirstOpenAgreesOnOneKind is the regression test
+// for #50: a brand-new scope's read-decide-write of backend.json used to
+// happen with no lock at all, so two processes racing to be the first to
+// open a scope (e.g. `dbhelm remote init` and a scheduled `snapshot
+// create` hitting a new connection+database at once) could both decide
+// and each atomically write their own kind — the loser's write would
+// silently overwrite the winner's, while the loser itself had already
+// proceeded to open (and use) a backend of the kind it decided, not the
+// kind that ended up persisted. Every concurrent first OpenBackend call
+// must agree on exactly one kind, matching what's actually on disk.
+// (Every goroutine requests the same kind here so this only exercises
+// the decision race, not bbolt's own separate single-writer file lock —
+// a different, already-handled concern.)
+func TestOpenBackendConcurrentFirstOpenAgreesOnOneKind(t *testing.T) {
+	dir := t.TempDir()
+
+	const n = 8
+	results := make([]BackendKind, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			b, err := OpenBackend(dir, BackendFS)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer b.Close()
+			if _, ok := b.(*fsBackend); ok {
+				results[i] = BackendFS
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: OpenBackend: %v", i, err)
+		}
+		if results[i] != BackendFS {
+			t.Fatalf("goroutine %d opened a %q backend, want every concurrent first-open to agree on %q", i, results[i], BackendFS)
+		}
+	}
+
+	persisted, err := scopeBackendKind(dir)
+	if err != nil {
+		t.Fatalf("scopeBackendKind: %v", err)
+	}
+	if persisted != BackendFS {
+		t.Fatalf("persisted backend.json kind = %q, want %q", persisted, BackendFS)
 	}
 }
 

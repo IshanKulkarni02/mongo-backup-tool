@@ -84,12 +84,36 @@ func OpenBackend(scope string, requestedKind BackendKind) (Backend, error) {
 		return nil, err
 	}
 	if kind == "" {
-		kind = requestedKind
-		if kind == "" {
-			kind = BackendBolt
-		}
-		if err := writeScopeBackendKind(scope, kind); err != nil {
-			return nil, err
+		// The scope's backend kind is decided once, on first creation.
+		// writeScopeBackendKind's own atomic write only protects against a
+		// torn write, not against two processes racing to be the one that
+		// creates backend.json in the first place — e.g. `dbhelm remote
+		// init` (BackendFS) and a scheduled `snapshot create`
+		// (BackendBolt) both hitting a brand-new scope at once. Both would
+		// read kind=="" concurrently, both would decide and atomically
+		// write their own kind, and whichever write lost would silently
+		// proceed using a backend that backend.json no longer names —
+		// permanently orphaning that history. Hold the scope lock across
+		// the read-decide-write so only one process ever makes this
+		// decision.
+		if lockErr := withScopeLock(scope, func() error {
+			// Re-check inside the lock: another process may have already
+			// decided and written the marker while this one was waiting.
+			existing, err := scopeBackendKind(scope)
+			if err != nil {
+				return err
+			}
+			if existing != "" {
+				kind = existing
+				return nil
+			}
+			kind = requestedKind
+			if kind == "" {
+				kind = BackendBolt
+			}
+			return writeScopeBackendKind(scope, kind)
+		}); lockErr != nil {
+			return nil, lockErr
 		}
 	}
 
