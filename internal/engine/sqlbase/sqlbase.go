@@ -245,11 +245,25 @@ func cellFromRaw(raw sql.RawBytes, dbType string) engine.Cell {
 		case "0", "f", "false", "FALSE":
 			return engine.Cell{Type: engine.CellBool, Display: "false", Raw: false}
 		}
-	case "TIMESTAMP", "TIMESTAMPTZ", "DATE", "DATETIME", "TIME":
+	case "TIME":
+		// A bare TIME value (e.g. "14:23:01") has no date component, so
+		// none of parseAnyTime's layouts (all of which require one) ever
+		// match it — routing it through parseAnyTime just to fail and hit
+		// the fallback below would also be wrong on success: time.Parse
+		// with a date-less layout fills in the zero date (year 0000), so
+		// Display would misleadingly become "0000-01-01T14:23:01Z"
+		// instead of the plain time. Pass the raw string straight through
+		// for both Display and Raw.
+		return engine.Cell{Type: engine.CellDate, Display: s, Raw: s}
+	case "TIMESTAMP", "TIMESTAMPTZ", "DATE", "DATETIME":
 		if t, err := parseAnyTime(s); err == nil {
 			return engine.Cell{Type: engine.CellDate, Display: t.Format(time.RFC3339), Raw: s}
 		}
-		return engine.Cell{Type: engine.CellDate, Display: s}
+		// Raw is still set here (unlike a bare formatting difference)
+		// so a caller depending on it for edit/write-back — e.g. sending
+		// the value back unchanged — doesn't silently lose it just
+		// because parseAnyTime's layouts didn't recognize this format.
+		return engine.Cell{Type: engine.CellDate, Display: s, Raw: s}
 	}
 	if looksNumeric(dbType) {
 		return engine.Cell{Type: engine.CellNumber, Display: s, Raw: s}
