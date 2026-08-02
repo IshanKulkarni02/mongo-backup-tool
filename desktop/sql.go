@@ -105,11 +105,36 @@ func (a *App) GetTableSchema(connectionName, database, table string) (engine.Tab
 	return sess.TableSchema(context.Background(), database, table)
 }
 
+// checkQueryStatement gates a statement arriving through a "query" RPC
+// (RunSQLQuery/RunSQLQueryJob/ExplainSQL) — paths meant only for reads, but
+// which reach db.QueryContext directly with no requireWritable/Classify
+// check of their own. A writable CTE (e.g. "WITH x AS (DELETE ...) SELECT
+// * FROM x") looks like a read to the frontend's client-side routing but
+// isn't one, so read-only enforcement must not depend on which RPC the
+// frontend happened to route the statement through. Statements that really
+// are reads (per safeguard.IsRead) skip this entirely — a read-only
+// connection must still be able to read.
+func checkQueryStatement(sqlText string, requireWritable func() error) error {
+	if safeguard.IsRead(sqlText) {
+		return nil
+	}
+	if err := requireWritable(); err != nil {
+		return err
+	}
+	if class := safeguard.Classify(sqlText); class.Risk == safeguard.RiskDangerous {
+		return fmt.Errorf("dangerous statement (%s) — run it via Execute instead, with confirmation", class.Reason)
+	}
+	return nil
+}
+
 // RunSQLQuery runs a read query and returns a typed result page. Used by
 // the bounded, fast table-browser path (TableView); the ad-hoc SQL editor
 // uses the cancelable RunSQLQueryJob instead, since arbitrary user SQL can
 // run arbitrarily long.
 func (a *App) RunSQLQuery(connectionName, database, sqlText string) (engine.SQLResult, error) {
+	if err := checkQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
+		return engine.SQLResult{}, err
+	}
 	sess, release, err := a.sqlSession(connectionName)
 	if err != nil {
 		return engine.SQLResult{}, err
@@ -127,6 +152,9 @@ func (a *App) RunSQLQuery(connectionName, database, sqlText string) (engine.SQLR
 // Call CancelJob(id) to abort a long-running query.
 func (a *App) RunSQLQueryJob(connectionName, database, sqlText string) string {
 	return a.jobs.runCancelable("sql-query", func(ctx context.Context) (any, error) {
+		if err := checkQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
+			return nil, err
+		}
 		sess, release, err := a.sqlSession(connectionName)
 		if err != nil {
 			return nil, err
@@ -171,8 +199,18 @@ func (a *App) RunSQLExecute(connectionName, database, sqlText, confirmDatabaseNa
 	return rows, err
 }
 
-// ExplainSQL returns the database's query-plan text for sqlText.
+// ExplainSQL returns the database's query-plan text for sqlText. On
+// Postgres, a leading "ANALYZE " modifier makes the engine's Explain
+// genuinely execute the wrapped statement (SQLSession.Explain builds
+// "EXPLAIN "+sqlText) — e.g. ExplainSQL(..., "ANALYZE DELETE FROM t") runs
+// EXPLAIN ANALYZE DELETE FROM t, which really deletes rows. That modifier
+// is stripped before classifying so a genuine "ANALYZE SELECT ..." still
+// reads as a read (no gating) while "ANALYZE DELETE ..." does not.
 func (a *App) ExplainSQL(connectionName, database, sqlText string) (string, error) {
+	inner := safeguard.StripExplainAnalyze(sqlText)
+	if err := checkQueryStatement(inner, func() error { return a.requireWritable(connectionName) }); err != nil {
+		return "", err
+	}
 	sess, release, err := a.sqlSession(connectionName)
 	if err != nil {
 		return "", err

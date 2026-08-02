@@ -96,7 +96,16 @@ func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, 
 		// The variable name still can't be parameterized (SQL doesn't
 		// allow parameterized identifiers), but it's now validated above;
 		// the value is always sent as a query argument.
-		if _, err := db.ExecContext(pingCtx, "SET @"+cfg.TenantSessionVar+" = ?", cfg.TenantValue); err != nil {
+		//
+		// A fresh timeout, not the ping-bounded pingCtx: on a slow
+		// connection, PingContext may have already consumed most of
+		// connectTimeout, leaving this statement too little budget and
+		// causing a spurious "context deadline exceeded" even though the
+		// connection itself is healthy.
+		setCtx, setCancel := context.WithTimeout(ctx, connectTimeout)
+		_, err := db.ExecContext(setCtx, "SET @"+cfg.TenantSessionVar+" = ?", cfg.TenantValue)
+		setCancel()
+		if err != nil {
 			db.Close()
 			if tun != nil {
 				tun.Close()
@@ -245,22 +254,61 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 	return out, fkRows.Err()
 }
 
+// withDatabase runs fn against a single connection pinned out of the pool,
+// having first issued USE <database> on it. Unlike Postgres (fixed DSN
+// database, no cross-database queries) a MySQL connection can query any
+// database on the server, so Query/Execute/Explain need to select
+// whichever one the caller actually asked for — but *sql.DB is a pool, and
+// USE only affects the specific connection it runs on, so issuing it via
+// db.ExecContext and then running the real query via another db.*Context
+// call gives no guarantee both land on the same underlying connection.
+// Pinning one *sql.Conn for both closes that gap.
+func (s *Session) withDatabase(ctx context.Context, database string, fn func(sqlbase.QueryExecer) error) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(database)); err != nil {
+		return fmt.Errorf("selecting database %s: %w", quoteIdent(database), err)
+	}
+	return fn(conn)
+}
+
 func (s *Session) Query(ctx context.Context, database, sqlText string) (engine.SQLResult, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.RunQuery(ctx, s.db, sqlText)
+	var result engine.SQLResult
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		result, err = sqlbase.RunQuery(ctx, q, sqlText)
+		return err
+	})
+	return result, err
 }
 
 func (s *Session) Execute(ctx context.Context, database, sqlText string) (int64, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.RunExec(ctx, s.db, sqlText)
+	var n int64
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		n, err = sqlbase.RunExec(ctx, q, sqlText)
+		return err
+	})
+	return n, err
 }
 
 func (s *Session) Explain(ctx context.Context, database, sqlText string) (string, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.FormatExplainRows(ctx, s.db, "EXPLAIN "+sqlText)
+	var out string
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		out, err = sqlbase.FormatExplainRows(ctx, q, "EXPLAIN "+sqlText)
+		return err
+	})
+	return out, err
 }
 
 // ListTableIndexes returns the table's non-PRIMARY indexes, reconstructed
@@ -275,35 +323,62 @@ func (s *Session) Explain(ctx context.Context, database, sqlText string) (string
 func (s *Session) ListTableIndexes(ctx context.Context, database, table string) ([]engine.IndexDef, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
+	// One row per index column, ordered so each index's columns arrive
+	// consecutively and in declared order — grouped in Go below rather
+	// than via GROUP_CONCAT/strings.Split, which broke on a column name
+	// containing a literal comma (legal in a backtick-quoted MySQL
+	// identifier): concatenating column names with a "," separator and
+	// splitting on "," can't tell a real separator from a comma inside a
+	// name, silently turning one indexed column into two fake ones.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT index_name, MAX(non_unique) = 0 AS is_unique, GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') AS cols
+		SELECT index_name, non_unique = 0 AS is_unique, column_name
 		FROM information_schema.statistics
 		WHERE table_schema = ? AND table_name = ? AND index_name != 'PRIMARY'
-		GROUP BY index_name
-		ORDER BY index_name`, database, table)
+		ORDER BY index_name, seq_in_index`, database, table)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []engine.IndexDef{}
+
+	type index struct {
+		unique bool
+		cols   []string
+	}
+	var order []string
+	byName := map[string]*index{}
 	for rows.Next() {
-		var name, cols string
+		var name, col string
 		var unique bool
-		if err := rows.Scan(&name, &unique, &cols); err != nil {
+		if err := rows.Scan(&name, &unique, &col); err != nil {
 			return nil, err
 		}
-		colList := strings.Split(cols, ",")
-		for i, c := range colList {
+		ix, ok := byName[name]
+		if !ok {
+			ix = &index{unique: unique}
+			byName[name] = ix
+			order = append(order, name)
+		}
+		ix.cols = append(ix.cols, col)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := []engine.IndexDef{}
+	for _, name := range order {
+		ix := byName[name]
+		colList := make([]string, len(ix.cols))
+		for i, c := range ix.cols {
 			colList[i] = quoteIdent(c)
 		}
 		kind := "INDEX"
-		if unique {
+		if ix.unique {
 			kind = "UNIQUE INDEX"
 		}
 		ddl := fmt.Sprintf("CREATE %s %s ON %s (%s)", kind, quoteIdent(name), quoteIdent(table), strings.Join(colList, ", "))
 		out = append(out, engine.IndexDef{Name: name, DDL: ddl})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // BeginConsistentRead opens a REPEATABLE READ, read-only transaction —
