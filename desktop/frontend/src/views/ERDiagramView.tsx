@@ -7,6 +7,7 @@ import { main, engine } from "../../wailsjs/go/models";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { Select } from "../components/Select";
+import { useToast } from "../components/Toast";
 import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./ERDiagramView.css";
 
@@ -162,6 +163,7 @@ export function ERDiagramView() {
   const [loading, setLoading] = useState(false);
   const startDatabasesRequest = useStaleGuard();
   const startTablesRequest = useStaleGuard();
+  const toast = useToast();
 
   useEffect(() => {
     ListConnections().then((conns) => {
@@ -176,11 +178,15 @@ export function ERDiagramView() {
     const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
-    TestConnection(connection).then((dbs) => {
-      if (isStale()) return;
-      setDatabases(dbs);
-      if (dbs.length > 0) setDatabase(dbs[0]);
-    });
+    TestConnection(connection)
+      .then((dbs) => {
+        if (isStale()) return;
+        setDatabases(dbs);
+        if (dbs.length > 0) setDatabase(dbs[0]);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
   }, [connection]);
 
   useEffect(() => {
