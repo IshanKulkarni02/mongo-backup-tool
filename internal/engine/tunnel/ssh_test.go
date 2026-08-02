@@ -342,3 +342,62 @@ func TestTOFUHostKeyCallbackDifferentHostsIndependent(t *testing.T) {
 		t.Fatal("host B's fingerprint missing or wrong")
 	}
 }
+
+// startStallingBastion listens for a TCP connection and accepts it but
+// never sends the SSH version banner or anything else — standing in for
+// a bastion that's up (the TCP handshake completes) but stalls during
+// key exchange/auth, whether from being slow, broken, or actively
+// hostile. It never closes the accepted connection itself, so the only
+// way Open can return is via its own deadline.
+func startStallingBastion(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("starting stalling listener: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+			// Deliberately never read/write/close: simulates a peer that
+			// accepted the TCP connection and then went silent mid-handshake.
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestOpenHandshakeTimesOutInsteadOfHangingForever is the regression test
+// for #73: ssh.ClientConfig.Timeout only has an effect inside the ssh
+// package's own Dial() convenience wrapper, which Open doesn't use (it
+// calls NewClientConn directly to get context-aware TCP dialing) — so
+// that field was dead configuration, and a bastion that accepts the TCP
+// connection but stalls during key exchange/auth could hang Open
+// forever, with context.Background() (what every real call site passes)
+// providing no bound of its own. Open must now return within
+// dialTimeout regardless.
+func TestOpenHandshakeTimesOutInsteadOfHangingForever(t *testing.T) {
+	orig := dialTimeout
+	dialTimeout = 200 * time.Millisecond
+	defer func() { dialTimeout = orig }()
+
+	bastionAddr := startStallingBastion(t)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Open(context.Background(), Config{Host: bastionAddr, User: "u", Password: "p"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error from a bastion that never completes the handshake")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Open did not return within a bounded time against a stalling bastion — handshake hang not fixed")
+	}
+}

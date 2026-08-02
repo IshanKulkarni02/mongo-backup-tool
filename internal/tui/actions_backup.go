@@ -47,7 +47,7 @@ func runBackup(connName, uri, dbName string) (string, error) {
 
 	idx, err := store.Load(backupsDir)
 	if err != nil {
-		return "", err
+		return "", cleanupOrphanedArchive(archivePath, err)
 	}
 	idx.Backups = append(idx.Backups, store.Backup{
 		ID:         id,
@@ -58,9 +58,25 @@ func runBackup(connName, uri, dbName string) (string, error) {
 		CreatedAt:  time.Now().Format(time.RFC3339),
 	})
 	if err := store.Save(backupsDir, idx); err != nil {
-		return "", err
+		return "", cleanupOrphanedArchive(archivePath, err)
 	}
 	return id, nil
+}
+
+// cleanupOrphanedArchive removes an archive file that mongotools.Dump
+// already wrote to disk but that never made it into the backup index
+// (the index load/save that follows the dump failed). Left in place,
+// that file would be invisible to Backup: list/restore — it's not in the
+// index — yet would permanently consume disk space, and a retry would
+// just create another archive alongside it rather than reusing or
+// clearing the orphan. Best-effort: if the removal itself fails too,
+// both errors are surfaced so the archive's path is at least visible in
+// the reported error instead of disappearing silently.
+func cleanupOrphanedArchive(archivePath string, cause error) error {
+	if rmErr := os.Remove(archivePath); rmErr != nil && !os.IsNotExist(rmErr) {
+		return fmt.Errorf("backup metadata save failed: %w (and failed to remove the orphaned archive %q: %v — remove it manually)", cause, archivePath, rmErr)
+	}
+	return fmt.Errorf("backup metadata save failed: %w (removed the orphaned archive %q)", cause, archivePath)
 }
 
 // runBackupRestore restores a backup archive in place (drop + restore),

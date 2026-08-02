@@ -128,12 +128,21 @@ func runDue() {
 		if !s.Due(now) {
 			continue
 		}
+		// Advance NextRun before firing (see BeginRun's doc comment): if
+		// this process is killed between here and MarkRan below, NextRun
+		// already reflects the next due time, so the next `scheduler run`
+		// can't fire this same interval's job a second time.
+		if err := scheduler.BeginRun(s.ID, now); err != nil {
+			fmt.Println("Error advancing schedule:", err)
+			continue
+		}
 		fmt.Printf("[%s] running schedule %s (%s %s/%s)\n", now.Format(time.RFC3339), s.ID, s.Action, s.Connection, s.Database)
 		if err := fireSchedule(s); err != nil {
 			fmt.Printf("[%s] schedule %s failed: %v\n", time.Now().Format(time.RFC3339), s.ID, err)
-			// Still advance NextRun on failure — a persistently broken
-			// schedule (e.g. unreachable database) shouldn't fire every
-			// tick forever; it'll retry at the next normal interval.
+			// NextRun was already advanced above regardless of outcome —
+			// a persistently broken schedule (e.g. unreachable database)
+			// shouldn't fire every tick forever; it'll retry at the next
+			// normal interval.
 		}
 		if err := scheduler.MarkRan(s.ID, now); err != nil {
 			fmt.Println("Error updating schedule:", err)

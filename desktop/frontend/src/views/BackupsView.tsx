@@ -30,10 +30,19 @@ export function BackupsView() {
   const [restoreTarget, setRestoreTarget] = useState<store.Backup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<store.Backup | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const toast = useToast();
 
   const load = useCallback(() => {
-    ListBackups().then(setBackups);
+    ListBackups()
+      .then(setBackups)
+      .catch((e) => {
+        // Without this, backups stayed null forever on failure — stuck
+        // on the loading Skeleton with no error shown.
+        setBackups([]);
+        toast.push("error", String(e));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -64,6 +73,7 @@ export function BackupsView() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+    setDeleteBusy(true);
     try {
       await DeleteBackup(deleteTarget.id);
       toast.push("success", "Backup deleted");
@@ -71,6 +81,7 @@ export function BackupsView() {
     } catch (e) {
       toast.push("error", String(e));
     } finally {
+      setDeleteBusy(false);
       setDeleteTarget(null);
     }
   }
@@ -154,6 +165,7 @@ export function BackupsView() {
           message={`Delete backup ${deleteTarget.id.slice(0, 8)}? This removes the archive file permanently.`}
           confirmLabel="Delete"
           danger
+          busy={deleteBusy}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
         />
@@ -181,7 +193,10 @@ function CreateBackupModal({ onClose, onCreated }: { onClose: () => void; onCrea
     if (!connection) return;
     setDatabases([]);
     setDatabase("");
-    TestConnection(connection).then(setDatabases);
+    TestConnection(connection)
+      .then(setDatabases)
+      .catch((e) => toast.push("error", String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   async function submit() {

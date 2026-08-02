@@ -34,6 +34,7 @@ export function AiPanel({ title, mode, placeholder, onGenerate, onInsert, insert
   }, [mode]);
 
   function generate() {
+    if (streaming) return; // a generation is already in flight — don't start a second one
     if (mode === "prompt" && !request.trim()) return;
     start(onGenerate(mode === "prompt" ? request : undefined));
   }
@@ -67,6 +68,7 @@ export function AiPanel({ title, mode, placeholder, onGenerate, onInsert, insert
             value={request}
             onChange={(e) => setRequest(e.target.value)}
             autoFocus
+            disabled={streaming}
             onKeyDown={(e) => {
               if (e.key === "Enter") generate();
             }}

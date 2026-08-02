@@ -139,6 +139,47 @@ func TestMigrateCredentialsMovesExistingPlaintextPassword(t *testing.T) {
 	}
 }
 
+// TestMigrateCredentialsDoesNotCountAFailedKeyringWrite is the regression
+// test for #62: setSecretVerified (inside Save's stripCredentials) can
+// silently fail a specific secret's keyring write while leaving its
+// plaintext value in place, with no error surfaced anywhere.
+// MigrateCredentials must detect that and not count it as migrated, even
+// though it looked like a valid candidate before Save ran.
+func TestMigrateCredentialsDoesNotCountAFailedKeyringWrite(t *testing.T) {
+	withTempConfigDir(t)
+	secrets.MockInit()
+	// Simulate the keyring silently failing this one specific write.
+	secrets.MockFailFor(credentialKey("legacy"))
+
+	dir, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	raw := `{"connections":[{"name":"legacy","uri":"mongodb://user:hunter2@localhost:27017","createdAt":"now"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatalf("seeding legacy config: %v", err)
+	}
+
+	n, err := MigrateCredentials()
+	if err != nil {
+		t.Fatalf("MigrateCredentials: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 connections reported migrated (the keyring write failed), got %d — false success", n)
+	}
+
+	// The password must still be recoverable — a failed keyring write
+	// falls back to keeping the plaintext URI, per stripCredentials' own
+	// contract, so this isn't a data-loss bug, just a reporting one.
+	onDisk, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("reading config after failed migration: %v", err)
+	}
+	if !strings.Contains(string(onDisk), "hunter2") {
+		t.Fatalf("expected the plaintext password to survive a failed migration attempt, got: %s", onDisk)
+	}
+}
+
 func TestRemoveDeletesCredential(t *testing.T) {
 	withTempConfigDir(t)
 	secrets.MockInit()
@@ -274,6 +315,52 @@ func TestRedactURIMasksPassword(t *testing.T) {
 	got := RedactURI("mongodb://user:s3cret@localhost:27017")
 	if strings.Contains(got, "s3cret") {
 		t.Fatalf("expected password masked, got %q", got)
+	}
+	if !strings.Contains(got, "****") {
+		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
+	}
+}
+
+// TestRedactURIPreservesQueryStringPercentEncoding is the regression
+// test for #29: RedactURI's blanket strings.ReplaceAll(u.String(),
+// "%2A", "*") to undo Go's percent-encoding of the "*" mask it just
+// inserted into userinfo also corrupted any pre-existing %2A sequence
+// elsewhere in the URI — e.g. a percent-encoded literal "*" in a query
+// value, plausible for an API token or webhook secret — since net/url
+// preserves RawQuery byte-for-byte. The exact repro from the issue:
+// "postgres://user:pass@host/db?token=abc%2Adef" must keep its query
+// string exactly as-is, with only the password masked.
+func TestRedactURIPreservesQueryStringPercentEncoding(t *testing.T) {
+	got := RedactURI("postgres://user:pass@host/db?token=abc%2Adef")
+	want := "postgres://user:****@host/db?token=abc%2Adef"
+	if got != want {
+		t.Fatalf("RedactURI corrupted the query string:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// TestRedactURIMasksAsteriskPassword confirms the original purpose of
+// the %2A-undoing logic still works: a password consisting of literal
+// asterisks (or containing one) must still be masked as **** rather
+// than the percent-encoded %2A%2A%2A%2A leaking through unmasked, now
+// that the fix scopes the un-escaping to just the userinfo segment.
+func TestRedactURIMasksAsteriskPassword(t *testing.T) {
+	got := RedactURI("mongodb://user:****@localhost:27017")
+	if strings.Contains(got, "%2A") {
+		t.Fatalf("expected the mask itself to read as **** not %%2A%%2A%%2A%%2A, got %q", got)
+	}
+	if !strings.Contains(got, "****") {
+		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
+	}
+}
+
+// TestRedactURIMasksPasswordContainingAt confirms a password containing
+// a literal "@" (percent-encoded as %40 by net/url, and thus the only
+// thing that could make the userinfo/host split ambiguous) doesn't
+// break the redaction — the mask still replaces it entirely regardless.
+func TestRedactURIMasksPasswordContainingAt(t *testing.T) {
+	got := RedactURI("postgres://user:p@ssword@host/db")
+	if strings.Contains(got, "p@ssword") || strings.Contains(got, "p%40ssword") {
+		t.Fatalf("expected the password to be fully masked, got %q", got)
 	}
 	if !strings.Contains(got, "****") {
 		t.Fatalf("expected mask placeholder in redacted URI, got %q", got)
