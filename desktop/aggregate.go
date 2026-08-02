@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
@@ -23,12 +24,34 @@ func (a *App) aggSession(connectionName string) (engine.AggregateSession, func()
 	return as, release, nil
 }
 
-// writesData is a heuristic (substring match on stage names, not a full
-// pipeline parse — same trade-off internal/engine/safeguard makes for SQL)
-// for whether a pipeline includes a stage that persists data rather than
-// only reading it.
+// writesData parses pipelineJSON the same way the mongodb engine's
+// Aggregate does (a JSON array of stage documents, via
+// bson.UnmarshalExtJSON) and reports whether any stage's actual top-level
+// key is $out or $merge — the only aggregation stages that persist data.
+// Checking the parsed pipeline rather than substring-matching the raw JSON
+// text closes two gaps a text-based check can't handle: a stage key
+// written with a unicode escape — e.g. {"$merge": ...}, which
+// UnmarshalExtJSON resolves to the real key $merge even though the raw
+// text contains neither literal substring "$out" nor "$merge" — that a
+// substring check would miss entirely; and $out/$merge appearing only as
+// an ordinary data *value* (e.g. {"$match":{"tag":"$out"}}) that a
+// substring check would wrongly flag as a write. An unparsable pipeline is
+// treated as not a write here — Aggregate itself rejects it with a clear
+// parse error right after; this only decides whether to run the Safe Mode
+// check first.
 func writesData(pipelineJSON string) bool {
-	return strings.Contains(pipelineJSON, `"$out"`) || strings.Contains(pipelineJSON, `"$merge"`)
+	var stages []bson.D
+	if err := bson.UnmarshalExtJSON([]byte(pipelineJSON), true, &stages); err != nil {
+		return false
+	}
+	for _, stage := range stages {
+		for _, elem := range stage {
+			if elem.Key == "$out" || elem.Key == "$merge" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RunAggregation runs an aggregation pipeline (a JSON array of stage

@@ -4,7 +4,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// recoverGracePeriod is how long an unindexed manifest must sit on disk
+// before recoverAbandonedManifests treats it as abandoned rather than a
+// Create()/CreateSQL() that's still in flight. Create writes the manifest
+// and doc-refs *before* acquiring the scope lock for the (fast) index
+// append — deliberately, so the lock never has to span the potentially
+// long database scan (see scopeLockStaleAge's doc comment: the lock is
+// meant to wrap only fast local I/O, never the Mongo network scan). That
+// leaves a real window where a manifest exists on disk but isn't indexed
+// yet purely because its Create() hasn't reached the index-append step,
+// not because anything crashed. By the time manifest.json exists, the
+// scan itself is already done (WriteDocRefs happens per collection during
+// scanning, saveManifest only after every collection finishes) — all
+// that's left is one fast, lock-protected index re-load+append — so this
+// only needs to cover that gap plus reasonable lock-contention delay, not
+// the full scan duration.
+//
+// Without this grace period, a concurrent GC acquiring the scope lock
+// first could see that brand-new manifest as abandoned and delete it,
+// and the in-flight Create would then still append its now-dangling ID to
+// the index once it resumes (it re-reads the index inside its own lock,
+// but never re-checks that its own manifest still exists) — permanently
+// breaking that snapshot and poisoning every future GC pass, which then
+// errors trying to load that ID during its reference sweep.
+const recoverGracePeriod = 2 * time.Minute
 
 // GCOptions configures pruning old snapshots for one connection+database.
 type GCOptions struct {
@@ -51,6 +77,16 @@ func recoverAbandonedManifests(scope string, backend Backend, idx *scopeIndex) (
 		id := strings.TrimSuffix(e.Name(), ".json")
 		if indexed[id] {
 			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // removed by a concurrent Create/GC between ReadDir and here
+			}
+			return recovered, err
+		}
+		if time.Since(info.ModTime()) < recoverGracePeriod {
+			continue // too young to be sure this isn't an in-flight Create
 		}
 		if err := os.Remove(filepath.Join(manifestsDir(scope), e.Name())); err != nil && !os.IsNotExist(err) {
 			return recovered, err
@@ -126,22 +162,39 @@ func gcLocked(scope string, backend Backend, opts GCOptions) (*GCResult, error) 
 
 	result := &GCResult{AbandonedRecovered: abandonedRecovered}
 	var kept []Summary
+	var pruned []string
 	for _, s := range idx.Snapshots {
 		if keep[s.ID] {
 			kept = append(kept, s)
 			continue
 		}
-		if err := deleteManifest(scope, s.ID); err != nil {
-			return nil, err
-		}
-		if err := backend.DeleteDocRefs(s.ID); err != nil {
-			return nil, err
-		}
-		result.ManifestsDeleted++
+		pruned = append(pruned, s.ID)
 	}
+
+	// Remove the pruned snapshots from the index and persist that *before*
+	// touching any of their files on disk. If deleting a manifest or its
+	// doc-refs then fails partway through the loop below, the affected
+	// snapshot is already unindexed — exactly the "abandoned manifest"
+	// shape recoverAbandonedManifests already knows how to finish cleaning
+	// up on the next GC pass. Doing it the other way around (as before)
+	// left a manifest deleted-but-still-indexed on a partial failure,
+	// which recoverAbandonedManifests's unindexed-only check can never
+	// recover: any later diff/restore/log against that snapshot ID would
+	// fail on a missing manifest instead of the snapshot simply not
+	// existing.
 	idx.Snapshots = kept
 	if err := saveIndex(scope, idx); err != nil {
 		return nil, err
+	}
+
+	for _, id := range pruned {
+		if err := backend.DeleteDocRefs(id); err != nil {
+			return nil, err
+		}
+		if err := deleteManifest(scope, id); err != nil {
+			return nil, err
+		}
+		result.ManifestsDeleted++
 	}
 
 	// Mark every hash still referenced by a kept snapshot. Streamed via the

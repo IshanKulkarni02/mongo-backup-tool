@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,58 @@ func TestIntegrationMySQLIntrospectionAndQuery(t *testing.T) {
 	}
 }
 
+// TestIntegrationMySQLQueryExecuteExplainTargetSelectedDatabase guards
+// against #20: Query/Execute/Explain called sqlbase.RunQuery/RunExec/
+// FormatExplainRows directly on the pooled *sql.DB with no USE <database>
+// and no schema-qualification of the SQL text, so they silently ran
+// against whatever database the DSN connected to (dbhelm_test)
+// regardless of the database argument. The session here connects with
+// dbhelm_test as its DSN default (see testURI); every call below
+// explicitly targets the sibling dbhelm_test2 (see
+// scripts/dev-seed/mysql-init) instead, proving Query/Execute/Explain
+// actually select it rather than silently falling back to the DSN's
+// default.
+func TestIntegrationMySQLQueryExecuteExplainTargetSelectedDatabase(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const otherDB = "dbhelm_test2"
+
+	mustExec(t, s, otherDB, `DROP TABLE IF EXISTS it_seconddb_probe`)
+	t.Cleanup(func() { mustExec(t, s, otherDB, `DROP TABLE IF EXISTS it_seconddb_probe`) })
+	mustExec(t, s, otherDB, `CREATE TABLE it_seconddb_probe (id INT AUTO_INCREMENT PRIMARY KEY, label VARCHAR(50))`)
+	mustExec(t, s, otherDB, `INSERT INTO it_seconddb_probe (label) VALUES ('from dbhelm_test2')`)
+
+	result, err := s.Query(ctx, otherDB, `SELECT label FROM it_seconddb_probe`)
+	if err != nil {
+		t.Fatalf("Query against sibling database: %v", err)
+	}
+	if result.Total != 1 || result.Rows[0]["label"].Display != "from dbhelm_test2" {
+		t.Fatalf("expected the row from dbhelm_test2, got %+v", result.Rows)
+	}
+
+	n, err := s.Execute(ctx, otherDB, `UPDATE it_seconddb_probe SET label = 'updated'`)
+	if err != nil {
+		t.Fatalf("Execute against sibling database: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 row updated in dbhelm_test2, got %d", n)
+	}
+
+	plan, err := s.Explain(ctx, otherDB, `SELECT * FROM it_seconddb_probe`)
+	if err != nil {
+		t.Fatalf("Explain against sibling database: %v", err)
+	}
+	if plan == "" {
+		t.Fatal("expected non-empty EXPLAIN output for the sibling-database query")
+	}
+
+	// The DSN's default database (dbhelm_test) must be unaffected — the
+	// table was only ever created in dbhelm_test2.
+	if _, err := s.Query(ctx, "dbhelm_test", `SELECT * FROM it_seconddb_probe`); err == nil {
+		t.Fatal("expected it_seconddb_probe to not exist in the DSN's default database (dbhelm_test)")
+	}
+}
+
 func TestIntegrationMySQLCompositePrimaryKeyAndIndexes(t *testing.T) {
 	s := openTestSession(t)
 	ctx := context.Background()
@@ -152,6 +205,49 @@ func TestIntegrationMySQLCompositePrimaryKeyAndIndexes(t *testing.T) {
 	}
 	if len(indexes) != 1 || indexes[0].Name != "it_membership_role_idx" {
 		t.Fatalf("expected exactly the explicit role index (PRIMARY excluded), got %+v", indexes)
+	}
+}
+
+// TestIntegrationMySQLIndexColumnNameContainingComma guards against #27:
+// ListTableIndexes used to join column names server-side with
+// GROUP_CONCAT(... SEPARATOR ',') and split them back apart client-side
+// with strings.Split(cols, ","). A backtick-quoted MySQL identifier may
+// legally contain a comma, so indexing a column literally named "a,b"
+// produced the concatenated string "a,b", which strings.Split turned into
+// two fake columns ["a", "b"] — a malformed CREATE INDEX referencing a
+// column that doesn't exist. Grouping the rows in Go instead (one row per
+// index column) never joins/splits through a separator, so this must
+// still report exactly one index with its one real column.
+func TestIntegrationMySQLIndexColumnNameContainingComma(t *testing.T) {
+	s := openTestSession(t)
+	ctx := context.Background()
+	const db = "dbhelm_test"
+
+	mustExec(t, s, db, "DROP TABLE IF EXISTS it_comma_col")
+	t.Cleanup(func() { mustExec(t, s, db, "DROP TABLE IF EXISTS it_comma_col") })
+
+	mustExec(t, s, db, "CREATE TABLE it_comma_col (id INT AUTO_INCREMENT PRIMARY KEY, `a,b` VARCHAR(50))")
+	mustExec(t, s, db, "CREATE INDEX it_comma_col_idx ON it_comma_col (`a,b`)")
+
+	indexes, err := s.ListTableIndexes(ctx, db, "it_comma_col")
+	if err != nil {
+		t.Fatalf("ListTableIndexes: %v", err)
+	}
+	if len(indexes) != 1 {
+		t.Fatalf("expected exactly 1 index, got %d: %+v", len(indexes), indexes)
+	}
+	idx := indexes[0]
+	if idx.Name != "it_comma_col_idx" {
+		t.Fatalf("unexpected index name: %q", idx.Name)
+	}
+	if !strings.Contains(idx.DDL, "`a,b`") {
+		t.Fatalf("expected DDL to reference the single column `a,b`, got: %s", idx.DDL)
+	}
+	// 3 quoted identifiers (index name, table name, the one column) = 6
+	// backticks; a split-on-comma bug would add a spurious 4th
+	// identifier (2 more backticks) for the fake second column.
+	if n := strings.Count(idx.DDL, "`"); n != 6 {
+		t.Fatalf("expected exactly 3 quoted identifiers (6 backticks) in DDL, got %d: %s", n, idx.DDL)
 	}
 }
 
@@ -192,5 +288,31 @@ func TestIntegrationMySQLBeginConsistentReadStreamsAllRowsIncludingBinary(t *tes
 	}
 	if !sawBinary {
 		t.Fatal("expected a row's BLOB column to round-trip as real []byte matching the inserted blob")
+	}
+}
+
+// TestIntegrationMySQLTenantSessionVar is the regression test for #7: the
+// tenant-session-var SET statement in Open() must succeed even though it
+// now runs on a fresh timeout instead of the ping-bounded one.
+func TestIntegrationMySQLTenantSessionVar(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess, err := (Engine{}).Open(ctx, engine.ConnConfig{
+		URI:              testURI(),
+		TenantSessionVar: "current_tenant",
+		TenantValue:      "acme",
+	})
+	if err != nil {
+		t.Skipf("mysql not reachable: %v", err)
+	}
+	defer sess.Close(context.Background())
+
+	sqlSess := sess.(engine.SQLSession)
+	result, err := sqlSess.Query(context.Background(), "dbhelm_test", `SELECT @current_tenant AS tenant`)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0]["tenant"].Display != "acme" {
+		t.Fatalf("expected tenant session var to be set to 'acme', got %+v", result.Rows)
 	}
 }

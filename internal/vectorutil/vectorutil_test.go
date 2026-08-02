@@ -124,3 +124,50 @@ func TestMismatchedDimensionsError(t *testing.T) {
 		t.Fatal("expected an error for mismatched dimensions in EuclideanDistance")
 	}
 }
+
+// TestParseRejectsInfinityAndNaN is the regression test for #46: the
+// comma-separated fallback path uses strconv.ParseFloat, which (unlike
+// encoding/json) happily accepts "Infinity"/"-Infinity"/"NaN" as valid
+// float64 literals. A resulting NaN/Inf value eventually fails to
+// JSON-marshal when returned across Wails' IPC boundary, and a marshal
+// failure there is a hard os.Exit — crashing the entire desktop app
+// instead of surfacing an ordinary validation error. Parse must reject
+// these at the source, exactly the repro from the issue:
+// Parse("[1, 2, Infinity]") (invalid as JSON, so it falls through to the
+// comma-separated path) must error, not silently return [1 2 +Inf].
+func TestParseRejectsInfinityAndNaN(t *testing.T) {
+	cases := []string{
+		"[1, 2, Infinity]",
+		"[1, 2, -Infinity]",
+		"[1, 2, NaN]",
+		"1, 2, Infinity",
+		"1, 2, NaN",
+	}
+	for _, in := range cases {
+		if v, err := Parse(in); err == nil {
+			t.Fatalf("Parse(%q) = %v, want an error rejecting the non-finite value", in, v)
+		}
+	}
+}
+
+// TestCosineSimilarityRejectsOverflow and
+// TestEuclideanDistanceRejectsOverflow are regression tests for the
+// second half of #46: even without any literal "Infinity"/"NaN" text,
+// individually finite but large-magnitude values can overflow float64
+// (~1.8e308) once squared and summed, producing a non-finite result from
+// otherwise "valid" input. Both functions must catch this in their own
+// output rather than returning NaN/Inf to the caller.
+func TestCosineSimilarityRejectsOverflow(t *testing.T) {
+	huge := []float64{1e200, 1e200, 1e200}
+	if sim, err := CosineSimilarity(huge, huge); err == nil {
+		t.Fatalf("CosineSimilarity(huge, huge) = %v, want an error for a non-finite result", sim)
+	}
+}
+
+func TestEuclideanDistanceRejectsOverflow(t *testing.T) {
+	a := []float64{1e200, 1e200, 1e200}
+	b := []float64{-1e200, -1e200, -1e200}
+	if d, err := EuclideanDistance(a, b); err == nil {
+		t.Fatalf("EuclideanDistance(a, b) = %v, want an error for a non-finite result", d)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -82,7 +83,21 @@ func (a *App) startup(ctx context.Context) {
 	}()
 }
 
+// shutdownJobWaitTimeout bounds how long shutdown waits for in-flight
+// background jobs (backups, restores, ad-hoc queries) to finish before
+// closing engine connections out from under them. A stuck job shouldn't be
+// able to hang app exit forever, so this is a best-effort grace period, not
+// a guarantee every job completes.
+const shutdownJobWaitTimeout = 30 * time.Second
+
 func (a *App) shutdown(ctx context.Context) {
+	waitCtx, cancel := context.WithTimeout(context.Background(), shutdownJobWaitTimeout)
+	defer cancel()
+	a.jobs.waitAll(waitCtx)
+	if waitCtx.Err() != nil {
+		runtime.LogWarningf(ctx, "shutdown: in-flight jobs did not finish within %s; closing connections anyway", shutdownJobWaitTimeout)
+	}
+
 	a.engines.Close()
 	a.webhookM.Lock()
 	if a.webhookL != nil {

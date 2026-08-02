@@ -98,8 +98,8 @@ const NAV: {
   beginnerVisible?: boolean;
 }[] = [
   { id: "connections", label: "Connections", beginnerLabel: "My Databases", icon: Database, beginnerVisible: true },
-  { id: "browser", label: "Browser", beginnerLabel: "My Data", icon: Table2, requires: "documents", beginnerVisible: true },
-  { id: "tables", label: "Tables", beginnerLabel: "My Data", icon: Grid3x3, requires: "sql", beginnerVisible: true },
+  { id: "browser", label: "Browser", beginnerLabel: "My Documents", icon: Table2, requires: "documents", beginnerVisible: true },
+  { id: "tables", label: "Tables", beginnerLabel: "My Tables", icon: Grid3x3, requires: "sql", beginnerVisible: true },
   { id: "dashboard", label: "Dashboard", beginnerLabel: "Overview", icon: LayoutDashboard, beginnerVisible: true },
   { id: "erdiagram", label: "ER Diagram", icon: Network, requires: "sql" },
   { id: "query", label: "Query", icon: Terminal, requires: "sql" },

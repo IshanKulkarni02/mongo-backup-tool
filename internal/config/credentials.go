@@ -167,38 +167,43 @@ type credentialCandidate struct {
 // read-back mismatch) and, by design, just leaves the plaintext value in
 // place on failure without surfacing an error — so the pre-migration
 // count alone can't be trusted as "N credentials migrated." A no-op
-// (0, nil) when no keyring is available or nothing needs moving.
+// (0, nil) when no keyring is available or nothing needs moving. Goes
+// through Update so this (called from a startup goroutine) can't lose an
+// in-flight AddConnection/RemoveConnection/SwitchTenant call's write, or
+// have its own write lost to one of theirs.
 func MigrateCredentials() (int, error) {
 	if !secrets.Available() {
 		return 0, nil
 	}
-	cfg, err := Load()
+	var candidates []credentialCandidate
+	err := Update(func(cfg *Config) error {
+		for _, c := range cfg.Connections {
+			cand := credentialCandidate{name: c.Name}
+			if c.CredentialRef == "" {
+				if _, _, ok := splitPassword(c.URI); ok {
+					cand.needsCred = true
+				}
+			}
+			if c.SSHPasswordRef == "" && c.SSHPassword != "" {
+				cand.needsSSHPass = true
+			}
+			if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
+				cand.needsSSHKey = true
+			}
+			if cand.needsCred || cand.needsSSHPass || cand.needsSSHKey {
+				candidates = append(candidates, cand)
+			}
+		}
+		if len(candidates) == 0 {
+			return errNoChange
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, err
 	}
-	var candidates []credentialCandidate
-	for _, c := range cfg.Connections {
-		cand := credentialCandidate{name: c.Name}
-		if c.CredentialRef == "" {
-			if _, _, ok := splitPassword(c.URI); ok {
-				cand.needsCred = true
-			}
-		}
-		if c.SSHPasswordRef == "" && c.SSHPassword != "" {
-			cand.needsSSHPass = true
-		}
-		if c.SSHPrivateKeyRef == "" && c.SSHPrivateKey != "" {
-			cand.needsSSHKey = true
-		}
-		if cand.needsCred || cand.needsSSHPass || cand.needsSSHKey {
-			candidates = append(candidates, cand)
-		}
-	}
 	if len(candidates) == 0 {
 		return 0, nil
-	}
-	if err := Save(cfg); err != nil {
-		return 0, err
 	}
 
 	after, err := Load()
@@ -234,7 +239,20 @@ func RedactURI(raw string) string {
 	if _, hasPass := u.User.Password(); hasPass {
 		u.User = url.UserPassword(u.User.Username(), "****")
 	}
-	// url.String() percent-encodes "*" in the userinfo component; undo that
-	// so the mask reads as **** instead of %2A%2A%2A%2A.
-	return strings.ReplaceAll(u.String(), "%2A", "*")
+	full := u.String()
+	// url.String() percent-encodes "*" in the userinfo component; undo
+	// that so the mask reads as **** instead of %2A%2A%2A%2A — but only
+	// within the userinfo segment (everything before the first "@"), not
+	// the whole serialized URL. A pre-existing %2A elsewhere — e.g. a
+	// percent-encoded literal "*" in a query value, like
+	// "?token=abc%2Adef" — must survive untouched; net/url preserves
+	// RawQuery byte-for-byte, so a blanket replace corrupts it into
+	// "?token=abc*def". Splitting on the first "@" is safe here: a
+	// literal "@" inside userinfo is always percent-encoded as %40 by
+	// url.String() (verified directly), so the first unescaped "@" in
+	// the serialized URL can only be the userinfo/host delimiter.
+	if idx := strings.IndexByte(full, '@'); idx != -1 {
+		return strings.ReplaceAll(full[:idx], "%2A", "*") + full[idx:]
+	}
+	return full
 }
