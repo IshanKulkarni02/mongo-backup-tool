@@ -85,11 +85,25 @@ func GeneratePydantic(schema engine.TableSchema, className string) string {
 	needsDatetime := false
 	needsFieldImport := false
 	pyNames := make([]string, len(cols))
+	// pythonIdentifier is many-to-one (every non-identifier char becomes
+	// "_"), so two distinct columns — e.g. "first-name" and "first_name"
+	// — can sanitize to the same Python name. Left alone, the second
+	// class-body assignment would silently shadow the first at class
+	// definition time, dropping a real column from the generated model
+	// with no error. seen disambiguates every collision after the first
+	// with a numeric suffix.
+	seen := make(map[string]int, len(cols))
 	for i, c := range cols {
 		if classify(c.DataType) == classDateTime {
 			needsDatetime = true
 		}
-		pyNames[i] = pythonIdentifier(c.Name)
+		base := pythonIdentifier(c.Name)
+		name := base
+		seen[base]++
+		if n := seen[base]; n > 1 {
+			name = fmt.Sprintf("%s_%d", base, n)
+		}
+		pyNames[i] = name
 		if pyNames[i] != c.Name {
 			needsFieldImport = true
 		}

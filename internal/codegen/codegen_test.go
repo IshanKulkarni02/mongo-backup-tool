@@ -274,6 +274,32 @@ func TestGeneratePydanticAliasesInvalidFieldNames(t *testing.T) {
 	}
 }
 
+// TestGeneratePydanticDisambiguatesCollidingNames is the regression test
+// for #76's residual gap: pythonIdentifier is many-to-one, so two
+// distinct SQL columns sanitizing to the same Python name ("first-name"
+// and "first_name" both become "first_name") must not silently shadow
+// each other in the generated class body — the second field would
+// otherwise vanish from the model with no error.
+func TestGeneratePydanticDisambiguatesCollidingNames(t *testing.T) {
+	schema := engine.TableSchema{
+		Name: "t",
+		Columns: []engine.Column{
+			{Name: "first-name", DataType: "TEXT", Nullable: false},
+			{Name: "first_name", DataType: "TEXT", Nullable: false},
+		},
+	}
+	got := GeneratePydantic(schema, "")
+	if !strings.Contains(got, `first_name: str = Field(alias="first-name")`) {
+		t.Fatalf("expected \"first-name\" sanitized to first_name, got:\n%s", got)
+	}
+	if !strings.Contains(got, `first_name_2: str = Field(alias="first_name")`) {
+		t.Fatalf("expected the colliding \"first_name\" column disambiguated to first_name_2, got:\n%s", got)
+	}
+	if strings.Count(got, "first_name:") != 1 {
+		t.Fatalf("expected exactly one field literally named first_name (not shadowed), got:\n%s", got)
+	}
+}
+
 // TestPythonIdentifierSanitizesInvalidNames covers pythonIdentifier
 // directly: invalid characters, a leading digit, and reserved keywords
 // all need distinct handling to produce a valid Python identifier.
