@@ -26,6 +26,9 @@ func Parse(s string) ([]float64, error) {
 	if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 		var out []float64
 		if err := json.Unmarshal([]byte(trimmed), &out); err == nil {
+			if err := checkFinite(out); err != nil {
+				return nil, err
+			}
 			return out, nil
 		}
 		trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
@@ -42,12 +45,32 @@ func Parse(s string) ([]float64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid number %q in vector: %w", p, err)
 		}
+		// strconv.ParseFloat (unlike the encoding/json path above)
+		// recognizes "Infinity"/"-Infinity"/"NaN" as valid input and
+		// happily returns the corresponding non-finite float64 — a
+		// downstream value that eventually fails to JSON-marshal when
+		// returned across Wails' IPC boundary, which crashes the entire
+		// desktop app (a marshal failure there calls a Fatal logger, i.e.
+		// os.Exit) instead of surfacing as an ordinary error.
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, fmt.Errorf("vector value %q is not a finite number", p)
+		}
 		out = append(out, v)
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no numbers found in vector")
 	}
 	return out, nil
+}
+
+// checkFinite reports an error if any value in vec is NaN or +/-Inf.
+func checkFinite(vec []float64) error {
+	for _, v := range vec {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("vector contains a non-finite value (NaN or Infinity)")
+		}
+	}
+	return nil
 }
 
 // CosineSimilarity returns the cosine similarity of a and b, in [-1, 1]
@@ -65,7 +88,14 @@ func CosineSimilarity(a, b []float64) (float64, error) {
 	if normA == 0 || normB == 0 {
 		return 0, fmt.Errorf("cannot compute cosine similarity of a zero vector")
 	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB)), nil
+	result := dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		// Every individual input value can be finite and still land here:
+		// large-magnitude but legitimate embedding values can overflow
+		// float64 (~1.8e308) once squared and summed in the loop above.
+		return 0, fmt.Errorf("cosine similarity is not finite (input values are too large in magnitude)")
+	}
+	return result, nil
 }
 
 // EuclideanDistance returns the straight-line distance between a and b.
@@ -79,7 +109,11 @@ func EuclideanDistance(a, b []float64) (float64, error) {
 		d := a[i] - b[i]
 		sum += d * d
 	}
-	return math.Sqrt(sum), nil
+	result := math.Sqrt(sum)
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0, fmt.Errorf("euclidean distance is not finite (input values are too large in magnitude)")
+	}
+	return result, nil
 }
 
 func checkDims(a, b []float64) error {

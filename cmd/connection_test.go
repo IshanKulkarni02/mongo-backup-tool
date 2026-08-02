@@ -213,3 +213,66 @@ func TestConnectionTestReportsUnknownConnection(t *testing.T) {
 		t.Fatal("expected an error for a connection that was never saved")
 	}
 }
+
+// TestConnectionAddSSHKeyFileReadErrorSurfaced is the regression test for
+// #58: previously, if --ssh-key was a genuine file path but reading it
+// failed for any reason (typo, permissions, a missing file), the error
+// was silently swallowed and the literal path string was saved as if it
+// were the key's PEM content — producing an unusable saved key with no
+// indication anything went wrong until a later SSH tunnel attempt failed
+// to parse it. A read failure on a path-shaped value must now surface as
+// an error from connection add itself.
+func TestConnectionAddSSHKeyFileReadErrorSurfaced(t *testing.T) {
+	withTempConfigDir(t)
+	resetConnAddFlags()
+	missingPath := t.TempDir() + "/does-not-exist"
+
+	connAddURI = "postgres://localhost:5432/app"
+	connAddEngine = "postgres"
+	connAddSSHHost = "bastion.example.com"
+	connAddSSHKey = missingPath
+
+	err := connectionAddCmd.RunE(connectionAddCmd, []string{"pg-ssh-missing"})
+	if err == nil {
+		t.Fatal("expected an error for an unreadable --ssh-key file path")
+	}
+
+	cfg, loadErr := config.Load()
+	if loadErr != nil {
+		t.Fatalf("Load: %v", loadErr)
+	}
+	if _, ok := cfg.Find("pg-ssh-missing"); ok {
+		t.Fatal("expected the connection not to be saved when --ssh-key couldn't be read")
+	}
+}
+
+// TestConnectionAddSSHKeyLiteralPEMContent confirms literal PEM content
+// passed directly (not a file path) is saved as-is, with no attempt to
+// read it as a file — the scripted/embedded use case this behavior is
+// meant to support.
+func TestConnectionAddSSHKeyLiteralPEMContent(t *testing.T) {
+	withTempConfigDir(t)
+	resetConnAddFlags()
+	pemContent := "-----BEGIN OPENSSH PRIVATE KEY-----\nfake-key-content\n-----END OPENSSH PRIVATE KEY-----\n"
+
+	connAddURI = "postgres://localhost:5432/app"
+	connAddEngine = "postgres"
+	connAddSSHHost = "bastion.example.com"
+	connAddSSHKey = pemContent
+
+	if err := connectionAddCmd.RunE(connectionAddCmd, []string{"pg-ssh-literal"}); err != nil {
+		t.Fatalf("RunE: %v", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	conn, ok := cfg.Find("pg-ssh-literal")
+	if !ok {
+		t.Fatal("connection not saved")
+	}
+	if conn.SSHPrivateKey != pemContent {
+		t.Fatalf("expected literal PEM content to be saved unchanged, got %q", conn.SSHPrivateKey)
+	}
+}

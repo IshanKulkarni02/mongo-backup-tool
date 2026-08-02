@@ -31,10 +31,18 @@ export function RemoteSyncView() {
   const toast = useToast();
 
   useEffect(() => {
-    ListConnections().then((conns) => {
-      setConnections(conns);
-      if (conns.length > 0) setConnection(conns[0].name);
-    });
+    ListConnections()
+      .then((conns) => {
+        setConnections(conns);
+        if (conns.length > 0) setConnection(conns[0].name);
+      })
+      .catch((e) => {
+        // Without this, connections stayed [] forever on failure — a
+        // misleading "No connections yet" empty state even though
+        // connections actually exist.
+        toast.push("error", String(e));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

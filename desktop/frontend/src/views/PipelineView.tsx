@@ -10,6 +10,7 @@ import { JsonTree } from "../components/JsonTree";
 import { AiPanel } from "../components/AiPanel";
 import { useToast } from "../components/Toast";
 import { Select } from "../components/Select";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./PipelineView.css";
 
@@ -42,6 +43,8 @@ export function PipelineView() {
   const [error, setError] = useState("");
   const [showAi, setShowAi] = useState(false);
   const toast = useToast();
+  const startDatabasesRequest = useStaleGuard();
+  const startCollectionsRequest = useStaleGuard();
 
   useEffect(() => {
     ListConnections().then((conns) => {
@@ -53,23 +56,32 @@ export function PipelineView() {
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
       .then((dbs) => {
+        if (isStale()) return;
         setDatabases(dbs);
         if (dbs.length > 0) setDatabase(dbs[0]);
       })
-      .catch((e) => toast.push("error", String(e)));
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   useEffect(() => {
     if (!connection || !database) return;
+    const isStale = startCollectionsRequest();
     setCollection("");
     ListCollections(connection, database)
-      .then(setCollections)
-      .catch((e) => toast.push("error", String(e)));
+      .then((cols) => {
+        if (!isStale()) setCollections(cols);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database]);
 

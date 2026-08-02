@@ -4,9 +4,11 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Backup describes one backup archive on disk.
@@ -45,14 +47,66 @@ func Load(backupsDir string) (*Index, error) {
 	return &idx, nil
 }
 
-// Save writes the backup index.
+// Save writes the backup index via a temp file + rename, so a crash mid-
+// write can never corrupt index.json into something the next Load can't
+// parse (which would otherwise break backup listing/restore/delete
+// app-wide until manually fixed).
 func Save(backupsDir string, idx *Index) error {
 	path := indexPath(backupsDir)
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data, 0o644)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// errNoChange is a sentinel an Update mutate function can return to skip
+// the save without Update treating it as a real error.
+var errNoChange = errors.New("store: no change")
+
+// updateMu serializes Update calls so a full load-mutate-save sequence on
+// index.json can't interleave with another one — e.g. a backup job and a
+// delete finishing close together, where a plain Load-then-Save per call
+// site lets whichever Save lands second silently drop the other's entry.
+var updateMu sync.Mutex
+
+// Update loads the backup index, applies mutate to it, and saves the
+// result, holding a package-level lock for the whole sequence. mutate can
+// return errNoChange to abort without saving (not treated as an error).
+func Update(backupsDir string, mutate func(*Index) error) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	idx, err := Load(backupsDir)
+	if err != nil {
+		return err
+	}
+	if err := mutate(idx); err != nil {
+		if errors.Is(err, errNoChange) {
+			return nil
+		}
+		return err
+	}
+	return Save(backupsDir, idx)
 }
 
 // Find looks up a backup by ID.
