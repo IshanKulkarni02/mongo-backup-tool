@@ -254,22 +254,61 @@ func (s *Session) TableSchema(ctx context.Context, database, table string) (engi
 	return out, fkRows.Err()
 }
 
+// withDatabase runs fn against a single connection pinned out of the pool,
+// having first issued USE <database> on it. Unlike Postgres (fixed DSN
+// database, no cross-database queries) a MySQL connection can query any
+// database on the server, so Query/Execute/Explain need to select
+// whichever one the caller actually asked for — but *sql.DB is a pool, and
+// USE only affects the specific connection it runs on, so issuing it via
+// db.ExecContext and then running the real query via another db.*Context
+// call gives no guarantee both land on the same underlying connection.
+// Pinning one *sql.Conn for both closes that gap.
+func (s *Session) withDatabase(ctx context.Context, database string, fn func(sqlbase.QueryExecer) error) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(database)); err != nil {
+		return fmt.Errorf("selecting database %s: %w", quoteIdent(database), err)
+	}
+	return fn(conn)
+}
+
 func (s *Session) Query(ctx context.Context, database, sqlText string) (engine.SQLResult, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.RunQuery(ctx, s.db, sqlText)
+	var result engine.SQLResult
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		result, err = sqlbase.RunQuery(ctx, q, sqlText)
+		return err
+	})
+	return result, err
 }
 
 func (s *Session) Execute(ctx context.Context, database, sqlText string) (int64, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.RunExec(ctx, s.db, sqlText)
+	var n int64
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		n, err = sqlbase.RunExec(ctx, q, sqlText)
+		return err
+	})
+	return n, err
 }
 
 func (s *Session) Explain(ctx context.Context, database, sqlText string) (string, error) {
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
-	return sqlbase.FormatExplainRows(ctx, s.db, "EXPLAIN "+sqlText)
+	var out string
+	err := s.withDatabase(ctx, database, func(q sqlbase.QueryExecer) error {
+		var err error
+		out, err = sqlbase.FormatExplainRows(ctx, q, "EXPLAIN "+sqlText)
+		return err
+	})
+	return out, err
 }
 
 // ListTableIndexes returns the table's non-PRIMARY indexes, reconstructed
