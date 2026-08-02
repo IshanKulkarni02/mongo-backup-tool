@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,5 +154,123 @@ func TestPushCloneRoundTripsContent(t *testing.T) {
 	}
 	if doc["label"] != "widget-a" {
 		t.Errorf("restored doc label = %v, want widget-a", doc["label"])
+	}
+}
+
+func TestAddRemoteFallsBackToSetURL(t *testing.T) {
+	requireGitAndLFS(t)
+	scope := t.TempDir()
+	if err := Init(scope); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := AddRemote(scope, "origin", "https://example.invalid/first.git"); err != nil {
+		t.Fatalf("AddRemote (first): %v", err)
+	}
+	// Adding again under the same name must update the URL via `remote
+	// set-url` rather than failing with "remote origin already exists".
+	if err := AddRemote(scope, "origin", "https://example.invalid/second.git"); err != nil {
+		t.Fatalf("AddRemote (second, same name): %v", err)
+	}
+	got := strings.TrimSpace(runGit(t, scope, "remote", "get-url", "origin"))
+	if got != "https://example.invalid/second.git" {
+		t.Fatalf("expected remote URL updated via set-url fallback, got %q", got)
+	}
+}
+
+func TestPushToleratesNothingToCommit(t *testing.T) {
+	requireGitAndLFS(t)
+	scope := t.TempDir()
+	if err := Init(scope); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	bareDir := t.TempDir()
+	runGit(t, bareDir, "init", "--bare", "--initial-branch=main")
+	if err := AddRemote(scope, "origin", bareDir); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scope, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(scope, "origin", "main", "first commit"); err != nil {
+		t.Fatalf("Push (first, has changes): %v", err)
+	}
+	// Nothing changed since the last commit — Push must tolerate git's
+	// "nothing to commit" instead of treating it as a failure.
+	if err := Push(scope, "origin", "main", "second commit, no changes"); err != nil {
+		t.Fatalf("Push (second, no changes): expected nothing-to-commit to be tolerated, got: %v", err)
+	}
+}
+
+func TestPullMergesRemoteChanges(t *testing.T) {
+	requireGitAndLFS(t)
+	sourceScope := t.TempDir()
+	if err := Init(sourceScope); err != nil {
+		t.Fatalf("Init (source): %v", err)
+	}
+	bareDir := t.TempDir()
+	runGit(t, bareDir, "init", "--bare", "--initial-branch=main")
+	if err := AddRemote(sourceScope, "origin", bareDir); err != nil {
+		t.Fatalf("AddRemote (source): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceScope, "file.txt"), []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(sourceScope, "origin", "main", "v1"); err != nil {
+		t.Fatalf("Push (v1): %v", err)
+	}
+
+	// A second clone of the same remote, standing in for a different
+	// machine that will later pull the source's subsequent change.
+	pullerScope := t.TempDir()
+	if err := os.RemoveAll(pullerScope); err != nil {
+		t.Fatal(err)
+	}
+	if err := Clone(bareDir, pullerScope, "main"); err != nil {
+		t.Fatalf("Clone (puller): %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(sourceScope, "file.txt"), []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(sourceScope, "origin", "main", "v2"); err != nil {
+		t.Fatalf("Push (v2): %v", err)
+	}
+
+	if err := Pull(pullerScope, "origin", "main"); err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(pullerScope, "file.txt"))
+	if err != nil {
+		t.Fatalf("reading pulled file: %v", err)
+	}
+	if string(got) != "v2" {
+		t.Fatalf("expected Pull to bring in the source's v2 content, got %q", got)
+	}
+}
+
+func TestCloneRejectsNonEmptyDir(t *testing.T) {
+	requireGitAndLFS(t)
+	sourceScope := t.TempDir()
+	if err := Init(sourceScope); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	bareDir := t.TempDir()
+	runGit(t, bareDir, "init", "--bare", "--initial-branch=main")
+	if err := AddRemote(sourceScope, "origin", bareDir); err != nil {
+		t.Fatalf("AddRemote: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceScope, "file.txt"), []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(sourceScope, "origin", "main", "v1"); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "unexpected.txt"), []byte("pre-existing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Clone(bareDir, target, "main"); err == nil {
+		t.Fatal("expected Clone to reject a target directory with pre-existing content")
 	}
 }

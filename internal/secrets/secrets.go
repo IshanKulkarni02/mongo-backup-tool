@@ -147,6 +147,9 @@ func MockFailFor(keys ...string) {
 func MockUnavailable() {
 	probeOnce.Do(func() {})
 	probeOK = false
+	cacheMu.Lock()
+	cache = map[string]string{}
+	cacheMu.Unlock()
 }
 
 // ResetForTesting clears the cached Available() probe result and cache,

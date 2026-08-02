@@ -208,9 +208,12 @@ func TestListenerBodyCapEnforced(t *testing.T) {
 	}
 
 	mu.Lock()
-	bodyLen := len(captured.Body)
+	body := captured.Body
 	mu.Unlock()
-	if bodyLen > bodyCap {
-		t.Fatalf("expected captured body to be capped at %d bytes, got %d", bodyCap, bodyLen)
+	if len(body) != bodyCap {
+		t.Fatalf("expected captured body to be capped at exactly %d bytes, got %d", bodyCap, len(body))
+	}
+	if body != huge[:bodyCap] {
+		t.Fatalf("expected captured body to be the correct %d-byte prefix of the input, got a mismatched body", bodyCap)
 	}
 }

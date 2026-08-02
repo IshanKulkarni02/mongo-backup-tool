@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,8 +38,11 @@ func TestJobManagerRunCancelableCancelsContext(t *testing.T) {
 				continue
 			}
 			if j.Status == JobFailed {
-				if !errors.Is(context.Canceled, context.Canceled) || j.Message == "" {
-					t.Fatalf("expected a cancellation message, got %q", j.Message)
+				// The job function returns ctx.Err() (context.Canceled) once the
+				// context is cancelled, so the failure message must actually
+				// reflect that — not just be non-empty.
+				if !strings.Contains(j.Message, context.Canceled.Error()) {
+					t.Fatalf("expected message to reflect context cancellation, got %q", j.Message)
 				}
 				return
 			}
