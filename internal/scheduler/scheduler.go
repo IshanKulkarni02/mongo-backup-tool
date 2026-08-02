@@ -16,7 +16,42 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/filelock"
 )
+
+// lockTimeout/lockStaleAge mirror internal/snapshot's scope lock — see
+// that package's doc comments for why a lock-file mechanism was chosen
+// over flock/LockFileEx, and why the stale-age threshold is set well
+// above this lock's actual critical section (fast local JSON I/O).
+const (
+	lockTimeout  = 5 * time.Second
+	lockStaleAge = 2 * time.Minute
+)
+
+func lockFilePath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "schedules.json.lock"), nil
+}
+
+// withLock runs fn while holding an exclusive, cross-process lock on
+// schedules.json's load-mutate-save critical section. This closes a
+// cross-process race the in-process fix used for config/queryhistory/
+// store (a plain sync.Mutex) can't: "dbhelm scheduler run" in one
+// terminal and "dbhelm scheduler add"/"remove" in another are two
+// separate OS processes, not two goroutines in one, so only a real
+// cross-process lock (backed by a lock file, not an in-memory mutex)
+// prevents whichever Save lands second from silently clobbering the
+// other's change.
+func withLock(fn func() error) error {
+	path, err := lockFilePath()
+	if err != nil {
+		return err
+	}
+	return filelock.With(path, lockTimeout, lockStaleAge, "the scheduler's schedules.json", fn)
+}
 
 // Action is what a schedule does when it fires.
 type Action string
@@ -93,6 +128,9 @@ func Load() ([]Schedule, error) {
 	return f.Schedules, nil
 }
 
+// save writes schedules.json via a temp file + rename, so a crash
+// mid-write can never corrupt it into something the next Load can't
+// parse.
 func save(schedules []Schedule) error {
 	path, err := filePath()
 	if err != nil {
@@ -102,7 +140,23 @@ func save(schedules []Schedule) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // Add creates a new schedule, validating its interval and computing its
@@ -125,12 +179,15 @@ func Add(s Schedule) (*Schedule, error) {
 	s.ID = uuid.NewString()
 	s.NextRun = time.Now().Add(d).Format(time.RFC3339)
 
-	schedules, err := Load()
+	err = withLock(func() error {
+		schedules, err := Load()
+		if err != nil {
+			return err
+		}
+		schedules = append(schedules, s)
+		return save(schedules)
+	})
 	if err != nil {
-		return nil, err
-	}
-	schedules = append(schedules, s)
-	if err := save(schedules); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -138,44 +195,81 @@ func Add(s Schedule) (*Schedule, error) {
 
 // Remove deletes a schedule by ID.
 func Remove(id string) error {
-	schedules, err := Load()
-	if err != nil {
-		return err
-	}
-	kept := schedules[:0]
-	found := false
-	for _, s := range schedules {
-		if s.ID == id {
-			found = true
-			continue
-		}
-		kept = append(kept, s)
-	}
-	if !found {
-		return fmt.Errorf("no schedule with id %q", id)
-	}
-	return save(kept)
-}
-
-// MarkRan records that a schedule fired at `at`, advancing its NextRun by
-// one interval from `at` (not from "now"), so a delayed run doesn't cause
-// runs to bunch up.
-func MarkRan(id string, at time.Time) error {
-	schedules, err := Load()
-	if err != nil {
-		return err
-	}
-	for i := range schedules {
-		if schedules[i].ID != id {
-			continue
-		}
-		d, err := schedules[i].interval()
+	return withLock(func() error {
+		schedules, err := Load()
 		if err != nil {
 			return err
 		}
-		schedules[i].LastRun = at.Format(time.RFC3339)
-		schedules[i].NextRun = at.Add(d).Format(time.RFC3339)
-		return save(schedules)
-	}
-	return fmt.Errorf("no schedule with id %q", id)
+		kept := schedules[:0]
+		found := false
+		for _, s := range schedules {
+			if s.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, s)
+		}
+		if !found {
+			return fmt.Errorf("no schedule with id %q", id)
+		}
+		return save(kept)
+	})
+}
+
+// BeginRun advances a schedule's NextRun by one interval from `at` (not
+// from "now", so a delayed run doesn't cause runs to bunch up), and must
+// be called *before* the schedule's job itself runs (see cmd/scheduler.go's
+// runDue).
+//
+// Persisting the advance up front, rather than after the job completes,
+// closes a double-fire gap: if the job runner is killed (kill -9, OOM,
+// power loss) after the job finishes but before its completion is
+// recorded, the old design left NextRun unchanged, so the next
+// `scheduler run` still saw the old, already-passed NextRun and fired the
+// very same interval's job again — e.g. a duplicate backup dump or
+// snapshot. With NextRun advanced first, a crash anywhere after this call
+// (including mid-job) can no longer cause that: at worst, a crash between
+// BeginRun and the job actually starting means this one interval's job is
+// silently skipped rather than duplicated, which is the safer failure
+// mode for anything that creates data (a missed backup vs. a duplicate
+// one).
+func BeginRun(id string, at time.Time) error {
+	return withLock(func() error {
+		schedules, err := Load()
+		if err != nil {
+			return err
+		}
+		for i := range schedules {
+			if schedules[i].ID != id {
+				continue
+			}
+			d, err := schedules[i].interval()
+			if err != nil {
+				return err
+			}
+			schedules[i].NextRun = at.Add(d).Format(time.RFC3339)
+			return save(schedules)
+		}
+		return fmt.Errorf("no schedule with id %q", id)
+	})
+}
+
+// MarkRan records that a schedule finished running (successfully or not)
+// starting at `at`. Called *after* the job returns; NextRun is not
+// touched here — BeginRun already advanced it before the job ran.
+func MarkRan(id string, at time.Time) error {
+	return withLock(func() error {
+		schedules, err := Load()
+		if err != nil {
+			return err
+		}
+		for i := range schedules {
+			if schedules[i].ID != id {
+				continue
+			}
+			schedules[i].LastRun = at.Format(time.RFC3339)
+			return save(schedules)
+		}
+		return fmt.Errorf("no schedule with id %q", id)
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"sync"
 	"testing"
 )
 
@@ -179,6 +180,44 @@ func TestBackendDocRefsRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSharedDecoderCloseIsRaceFree guards against #47: Close() used to
+// mutate/free the underlying *zstd.Decoder without taking s.mu, while
+// decompress() took the lock — a data race if one goroutine is mid-Get()
+// while another closes the backend. Run with `go test -race` (as this
+// package's suite always is) to actually catch the race; without -race
+// this test can pass even with the bug present.
+func TestSharedDecoderCloseIsRaceFree(t *testing.T) {
+	dec, err := newSharedDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	codec, err := newDocCodec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer codec.Close()
+	compressed := codec.compress([]byte(`{"v":1}`))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// A decompress error (e.g. after Close already ran) is fine —
+			// this test only cares that concurrent access is race-free,
+			// not that it succeeds.
+			dec.decompress(compressed)
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dec.Close()
+	}()
+	wg.Wait()
 }
 
 func TestBackendDocRefsSpanMultipleChunks(t *testing.T) {

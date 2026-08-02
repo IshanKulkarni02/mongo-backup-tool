@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -27,7 +28,19 @@ func (a *App) collectSchemas(connectionName, database string) ([]engine.TableSch
 	for _, ns := range namespaces {
 		schema, err := sess.TableSchema(ctx, database, ns.Name)
 		if err != nil {
-			continue // an uninspectable table just doesn't participate in the diff
+			// A single uninspectable table (an odd view type, say) just
+			// doesn't participate in the diff. But if the connection itself
+			// dropped mid-scan, every remaining TableSchema call would fail
+			// the same way, and silently skipping the rest would make the
+			// diff (and any migration generated from it) report real,
+			// still-existing tables as dropped. Ping distinguishes the two:
+			// if the session is still alive, it's just this table; if not,
+			// abort instead of returning a diff built on a half-scanned
+			// schema.
+			if pingErr := sess.Ping(ctx); pingErr != nil {
+				return nil, fmt.Errorf("lost connection to %q while inspecting table %q: %w", connectionName, ns.Name, pingErr)
+			}
+			continue
 		}
 		out = append(out, schema)
 	}

@@ -6,11 +6,27 @@ import (
 	"crypto/rsa"
 	"io"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// generateTestHostKey returns a fresh SSH public key, standing in for a
+// bastion's host key without needing a real network handshake.
+func generateTestHostKey(t *testing.T) ssh.PublicKey {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating test host key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+	return signer.PublicKey()
+}
 
 // startEchoServer runs a TCP listener that echoes back whatever it reads,
 // standing in for "the database" on the far side of the tunnel.
@@ -41,6 +57,15 @@ func startEchoServer(t *testing.T) string {
 // to whatever address the client asked for — a stand-in for a real
 // bastion host, so the tunnel dialer can be tested without one.
 func startSSHServer(t *testing.T) (addr, user, password string) {
+	t.Helper()
+	return startSSHServerWithDialDelay(t, 0)
+}
+
+// startSSHServerWithDialDelay is startSSHServer with a configurable delay
+// inserted before the bastion dials the requested target for each
+// direct-tcpip channel — used to simulate a slow/congested bastion whose
+// channel-open round trip outlasts a caller's context deadline.
+func startSSHServerWithDialDelay(t *testing.T, dialDelay time.Duration) (addr, user, password string) {
 	t.Helper()
 	user, password = "tunneluser", "s3cret"
 
@@ -75,13 +100,13 @@ func startSSHServer(t *testing.T) (addr, user, password string) {
 			if err != nil {
 				return
 			}
-			go handleSSHConn(conn, cfg)
+			go handleSSHConn(conn, cfg, dialDelay)
 		}
 	}()
 	return ln.Addr().String(), user, password
 }
 
-func handleSSHConn(conn net.Conn, cfg *ssh.ServerConfig) {
+func handleSSHConn(conn net.Conn, cfg *ssh.ServerConfig, dialDelay time.Duration) {
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, cfg)
 	if err != nil {
 		return
@@ -103,6 +128,9 @@ func handleSSHConn(conn net.Conn, cfg *ssh.ServerConfig) {
 		if err := ssh.Unmarshal(newCh.ExtraData(), &payload); err != nil {
 			newCh.Reject(ssh.ConnectionFailed, "bad request")
 			continue
+		}
+		if dialDelay > 0 {
+			time.Sleep(dialDelay)
 		}
 		target := net.JoinHostPort(payload.DestAddr, itoa(payload.DestPort))
 		targetConn, err := net.DialTimeout("tcp", target, 5*time.Second)
@@ -187,5 +215,277 @@ func TestTunnelRejectsHostKeyMismatch(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for a pinned host key mismatch")
+	}
+}
+
+// TestTunnelTOFURecordsHostKeyOnFirstConnect is the end-to-end regression
+// test for #72: a real Open() call with KnownHostsPath set (no manual
+// HostKeyFingerprint) must succeed on first connection to a bastion, and
+// must record that bastion's actual key fingerprint to the known-hosts
+// file — proving the wiring from Open through hostKeyCallback into
+// tofuHostKeyCallback actually runs, not just the callback in isolation.
+func TestTunnelTOFURecordsHostKeyOnFirstConnect(t *testing.T) {
+	bastionAddr, user, password := startSSHServer(t)
+	knownHosts := filepath.Join(t.TempDir(), "known_hosts.json")
+
+	tun, err := Open(context.Background(), Config{
+		Host: bastionAddr, User: user, Password: password,
+		KnownHostsPath: knownHosts,
+	})
+	if err != nil {
+		t.Fatalf("Open (first connect, TOFU): %v", err)
+	}
+	tun.Close()
+
+	hosts, err := loadKnownHosts(knownHosts)
+	if err != nil {
+		t.Fatalf("loadKnownHosts: %v", err)
+	}
+	if hosts[bastionAddr] == "" {
+		t.Fatalf("expected a recorded fingerprint for %s, got %+v", bastionAddr, hosts)
+	}
+
+	// A second connection to the same (unchanged) bastion must still
+	// succeed against the now-recorded fingerprint.
+	tun2, err := Open(context.Background(), Config{
+		Host: bastionAddr, User: user, Password: password,
+		KnownHostsPath: knownHosts,
+	})
+	if err != nil {
+		t.Fatalf("Open (second connect, same key): %v", err)
+	}
+	tun2.Close()
+}
+
+// TestTOFUHostKeyCallbackTrustsFirstConnection unit-tests
+// tofuHostKeyCallback directly: the very first key seen for a host is
+// always trusted and recorded.
+func TestTOFUHostKeyCallbackTrustsFirstConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	key := generateTestHostKey(t)
+
+	cb := tofuHostKeyCallback(path, "bastion.example.com:22")
+	if err := cb("bastion.example.com:22", nil, key); err != nil {
+		t.Fatalf("first connection should be trusted, got: %v", err)
+	}
+
+	hosts, err := loadKnownHosts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts["bastion.example.com:22"] != ssh.FingerprintSHA256(key) {
+		t.Fatalf("recorded fingerprint = %q, want %q", hosts["bastion.example.com:22"], ssh.FingerprintSHA256(key))
+	}
+}
+
+// TestTOFUHostKeyCallbackAcceptsSameKeyAgain confirms a host that's
+// already trusted keeps working on later connections presenting the same
+// key — TOFU shouldn't mean "trust once, then always fail."
+func TestTOFUHostKeyCallbackAcceptsSameKeyAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	key := generateTestHostKey(t)
+	cb := tofuHostKeyCallback(path, "bastion.example.com:22")
+
+	if err := cb("bastion.example.com:22", nil, key); err != nil {
+		t.Fatalf("first connection: %v", err)
+	}
+	if err := cb("bastion.example.com:22", nil, key); err != nil {
+		t.Fatalf("second connection with the same key should still be trusted, got: %v", err)
+	}
+}
+
+// TestTOFUHostKeyCallbackRejectsChangedKey is the core MITM-detection
+// regression test for #72: once a host's key is trusted, a *different*
+// key presented for the same host — exactly what an attacker
+// impersonating that host, or a real MITM, would present — must be
+// rejected, not silently accepted the way InsecureIgnoreHostKey always
+// did.
+func TestTOFUHostKeyCallbackRejectsChangedKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	firstKey := generateTestHostKey(t)
+	secondKey := generateTestHostKey(t)
+	cb := tofuHostKeyCallback(path, "bastion.example.com:22")
+
+	if err := cb("bastion.example.com:22", nil, firstKey); err != nil {
+		t.Fatalf("first connection: %v", err)
+	}
+	err := cb("bastion.example.com:22", nil, secondKey)
+	if err == nil {
+		t.Fatal("expected an error when a different key is presented for an already-trusted host")
+	}
+
+	// The original (correct) fingerprint must survive the rejected attempt
+	// — an attacker's presented key must never overwrite the trusted one.
+	hosts, loadErr := loadKnownHosts(path)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if hosts["bastion.example.com:22"] != ssh.FingerprintSHA256(firstKey) {
+		t.Fatalf("trusted fingerprint was overwritten by the rejected connection attempt")
+	}
+}
+
+// TestTOFUHostKeyCallbackDifferentHostsIndependent confirms trust is
+// scoped per-host: trusting one bastion's key must not affect whether a
+// different host's key is treated as first-seen.
+func TestTOFUHostKeyCallbackDifferentHostsIndependent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts.json")
+	keyA := generateTestHostKey(t)
+	keyB := generateTestHostKey(t)
+
+	cbA := tofuHostKeyCallback(path, "host-a.example.com:22")
+	if err := cbA("host-a.example.com:22", nil, keyA); err != nil {
+		t.Fatalf("host A first connection: %v", err)
+	}
+
+	cbB := tofuHostKeyCallback(path, "host-b.example.com:22")
+	if err := cbB("host-b.example.com:22", nil, keyB); err != nil {
+		t.Fatalf("host B first connection (independent of host A's trust): %v", err)
+	}
+
+	hosts, err := loadKnownHosts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts["host-a.example.com:22"] != ssh.FingerprintSHA256(keyA) {
+		t.Fatal("host A's fingerprint missing or wrong after host B connected")
+	}
+	if hosts["host-b.example.com:22"] != ssh.FingerprintSHA256(keyB) {
+		t.Fatal("host B's fingerprint missing or wrong")
+	}
+}
+
+// startTrackedListener runs a TCP listener standing in for "the database"
+// on the far side of the tunnel, whose accepted connections are watched
+// rather than echoed: each one blocks on a read (which only returns once
+// the peer closes its side) and then signals on the returned channel.
+// This lets a test observe, from the target side, whether a connection
+// opened through the tunnel is ever actually torn down.
+func startTrackedListener(t *testing.T) (addr string, closed <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("starting tracked listener: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	ch := make(chan struct{}, 16)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var buf [1]byte
+				c.Read(buf[:]) // blocks until the peer closes (or errors)
+				ch <- struct{}{}
+			}(conn)
+		}
+	}()
+	return ln.Addr().String(), ch
+}
+
+// TestDialContextClosesLateSucceedingConnWhenCallerAbandoned is the
+// regression test for #74: DialContext raced its background t.client.Dial
+// call against ctx.Done() using a buffered result channel that nobody
+// would ever read from again once the caller gave up. If the dial
+// completed successfully after the caller already abandoned it (a bastion
+// slow enough that ctx's deadline elapses before the channel-open round
+// trip finishes), the resulting net.Conn — a live SSH channel — was never
+// closed by anyone: silently leaked for the lifetime of the Tunnel.
+//
+// This is verified from the far side of the tunnel: startTrackedListener
+// stands in for "the database" and reports when its accepted connection
+// is closed. The bastion is configured to delay each channel-open by
+// longer than the caller's context deadline, so DialContext is guaranteed
+// to return via ctx.Done() while the dial is still in flight. If the fix
+// works, the eventually-successful (but abandoned) dial's conn gets closed
+// as soon as it completes, which propagates through the SSH-forwarded
+// connection and closes the tracked listener's side too — observed here
+// within a generous bound. Before the fix, nothing ever closes it.
+func TestDialContextClosesLateSucceedingConnWhenCallerAbandoned(t *testing.T) {
+	targetAddr, targetClosed := startTrackedListener(t)
+	bastionAddr, user, password := startSSHServerWithDialDelay(t, 300*time.Millisecond)
+
+	tun, err := Open(context.Background(), Config{Host: bastionAddr, User: user, Password: password})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer tun.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err = tun.DialContext(ctx, "tcp", targetAddr)
+	if err == nil {
+		t.Fatal("expected DialContext to return an error once its context expired")
+	}
+
+	select {
+	case <-targetClosed:
+		// The abandoned-but-succeeded dial's connection was closed once
+		// it completed — no leak.
+	case <-time.After(3 * time.Second):
+		t.Fatal("connection opened by an abandoned DialContext call was never closed — leaked")
+	}
+}
+
+// startStallingBastion listens for a TCP connection and accepts it but
+// never sends the SSH version banner or anything else — standing in for
+// a bastion that's up (the TCP handshake completes) but stalls during
+// key exchange/auth, whether from being slow, broken, or actively
+// hostile. It never closes the accepted connection itself, so the only
+// way Open can return is via its own deadline.
+func startStallingBastion(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("starting stalling listener: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { conn.Close() })
+			// Deliberately never read/write/close: simulates a peer that
+			// accepted the TCP connection and then went silent mid-handshake.
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestOpenHandshakeTimesOutInsteadOfHangingForever is the regression test
+// for #73: ssh.ClientConfig.Timeout only has an effect inside the ssh
+// package's own Dial() convenience wrapper, which Open doesn't use (it
+// calls NewClientConn directly to get context-aware TCP dialing) — so
+// that field was dead configuration, and a bastion that accepts the TCP
+// connection but stalls during key exchange/auth could hang Open
+// forever, with context.Background() (what every real call site passes)
+// providing no bound of its own. Open must now return within
+// dialTimeout regardless.
+func TestOpenHandshakeTimesOutInsteadOfHangingForever(t *testing.T) {
+	orig := dialTimeout
+	dialTimeout = 200 * time.Millisecond
+	defer func() { dialTimeout = orig }()
+
+	bastionAddr := startStallingBastion(t)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Open(context.Background(), Config{Host: bastionAddr, User: "u", Password: "p"})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error from a bastion that never completes the handshake")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Open did not return within a bounded time against a stalling bastion — handshake hang not fixed")
 	}
 }
