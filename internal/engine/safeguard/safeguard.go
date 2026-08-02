@@ -42,6 +42,15 @@ var (
 	// quoted data (e.g. WHERE name = 'INSERT') isn't mistaken for a real
 	// SQL keyword when scanning for a statement's verb or WHERE clause.
 	stringLiteralRe = regexp.MustCompile(`'([^']|'')*'`)
+	// selectIntoRe matches a top-level INTO clause following a SELECT's
+	// column list — Postgres's `SELECT ... INTO new_table FROM ...`
+	// (creates a table) and MySQL's `SELECT ... INTO OUTFILE/DUMPFILE
+	// '...'` (writes a file server-side) are both syntactically SELECT
+	// statements that write, not read. Matched against the string-
+	// literal-stripped text so `'...into...'` appearing only in quoted
+	// data can't trigger it, and \b on both sides so it can't match
+	// "into" as a substring of a longer identifier (into_table, foo_into).
+	selectIntoRe = regexp.MustCompile(`(?i)\bINTO\b`)
 )
 
 // stripStringLiterals blanks the contents of every single-quoted string
@@ -126,6 +135,11 @@ func classifyOne(sqlText string) Classification {
 		}
 		return Classification{Risk: RiskConfirm, Reason: "UPDATE modifies rows"}
 	case "INSERT", "CREATE":
+		return Classification{Risk: RiskNone}
+	case "SELECT":
+		if selectIntoRe.MatchString(stripStringLiterals(stripped)) {
+			return Classification{Risk: RiskConfirm, Reason: "SELECT ... INTO writes a new table or a server-side file, not a plain read"}
+		}
 		return Classification{Risk: RiskNone}
 	case "WITH":
 		// A CTE's risk comes from its final statement; find the last
@@ -214,10 +228,10 @@ func splitStatements(sqlText string) []string {
 // RunSavedQuery) can skip the requireWritable/Classify gating entirely —
 // mirroring the frontend's looksLikeRead check for the ad-hoc "Run" button.
 var readVerbs = map[string]bool{
-	"SELECT": true, "SHOW": true, "PRAGMA": true, "EXPLAIN": true,
+	"SHOW": true, "PRAGMA": true, "EXPLAIN": true,
 }
 
-var writeVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER|CREATE)\b`)
+var writeVerbRe = regexp.MustCompile(`(?i)\b(DELETE|UPDATE|INSERT|DROP|TRUNCATE|ALTER|CREATE|INTO)\b`)
 
 // IsRead reports whether every statement in sqlText (which may contain
 // more than one semicolon-separated statement) is read-only: SELECT,
@@ -246,6 +260,15 @@ func isReadOne(sqlText string) bool {
 	stripped = strings.TrimSpace(stripped)
 	upper := strings.ToUpper(stripped)
 	verb := firstWordRe.FindString(upper)
+	if verb == "SELECT" {
+		// SELECT ... INTO new_table (Postgres, creates a table) and
+		// SELECT ... INTO OUTFILE/DUMPFILE '...' (MySQL, writes a file
+		// server-side) are syntactically SELECT statements that write,
+		// not read — treating every SELECT-led statement as
+		// automatically read would let these skip requireWritable
+		// entirely on a read-only connection.
+		return !selectIntoRe.MatchString(stripStringLiterals(upper))
+	}
 	if readVerbs[verb] {
 		return true
 	}

@@ -12,6 +12,12 @@ func TestClassify(t *testing.T) {
 		{"insert", "INSERT INTO users (email) VALUES ('a@b.com')", RiskNone},
 		{"create table", "CREATE TABLE t (id INT)", RiskNone},
 
+		// #9: SELECT ... INTO writes (a new table on Postgres, a
+		// server-side file on MySQL) — it must not be silently RiskNone
+		// just because its first word is SELECT.
+		{"postgres select into table", "SELECT * INTO new_table FROM users", RiskConfirm},
+		{"mysql select into outfile", "SELECT * FROM users INTO OUTFILE '/tmp/x'", RiskConfirm},
+
 		{"delete with where", "DELETE FROM users WHERE id = 5", RiskConfirm},
 		{"update with where", "UPDATE users SET active = false WHERE id = 5", RiskConfirm},
 
@@ -130,6 +136,16 @@ func TestIsRead(t *testing.T) {
 		{"select then drop", "SELECT 1; DROP TABLE users", false},
 		{"two reads", "SELECT 1; SHOW TABLES", true},
 		{"semicolon inside string stays one read statement", "SELECT 'a;b' AS val", true},
+
+		// #9: SELECT ... INTO is syntactically a SELECT but writes, not
+		// reads — Postgres creates a table, MySQL writes a file. A plain
+		// first-word check must not let these through IsRead's fast path.
+		{"postgres select into table", "SELECT * INTO new_table FROM users", false},
+		{"mysql select into outfile", "SELECT * FROM users INTO OUTFILE '/tmp/x'", false},
+		{"mysql select into dumpfile", "SELECT * FROM users INTO DUMPFILE '/tmp/x'", false},
+		{"cte then select into", "WITH x AS (SELECT 1) SELECT * INTO new_table FROM x", false},
+		{"into as identifier substring is not a write", "SELECT * FROM into_table WHERE table_into = 1", true},
+		{"into inside string literal is not a write", "SELECT * FROM users WHERE note = 'into repair'", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
