@@ -35,6 +35,54 @@ func resolveConn(name string) (*config.Connection, error) {
 	return conn, nil
 }
 
+// connConfigFor builds the engine.ConnConfig for a saved connection,
+// including its SSH tunnel settings if any are set — the one place this
+// mapping happens for CLI-side session opening, so openSQLSession and
+// openEngineSession can't drift out of sync with each other.
+func connConfigFor(conn *config.Connection) (engine.ConnConfig, error) {
+	connCfg := engine.ConnConfig{
+		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
+		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
+	}
+	if conn.SSHHost != "" {
+		knownHosts, err := config.SSHKnownHostsPath()
+		if err != nil {
+			return engine.ConnConfig{}, err
+		}
+		connCfg.SSHTunnel = &tunnel.Config{
+			Host:           conn.SSHHost,
+			User:           conn.SSHUser,
+			Password:       conn.SSHPassword,
+			PrivateKeyPEM:  conn.SSHPrivateKey,
+			KnownHostsPath: knownHosts,
+		}
+	}
+	return connCfg, nil
+}
+
+// openEngineSession opens a one-shot engine.Session for a saved
+// connection, regardless of which surface its engine additionally
+// implements (SQL, documents) — used where only the engine-agnostic
+// Session methods (Ping, ListDatabases) are needed, e.g. `connection
+// test`. The CLI has no long-lived session cache (unlike desktop's
+// engine.Manager), so callers must invoke the returned release func when
+// done.
+func openEngineSession(conn *config.Connection) (engine.Session, func(), error) {
+	eng, err := engine.Lookup(conn.EngineID())
+	if err != nil {
+		return nil, nil, err
+	}
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	sess, err := eng.Open(context.Background(), connCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sess, func() { sess.Close(context.Background()) }, nil
+}
+
 // openSQLSession opens a one-shot engine.SQLSession for a saved connection —
 // the CLI has no long-lived session cache (unlike desktop's engine.Manager),
 // so callers must invoke the returned release func when done.
@@ -43,17 +91,9 @@ func openSQLSession(conn *config.Connection) (engine.SQLSession, func(), error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	connCfg := engine.ConnConfig{
-		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
-		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
-	}
-	if conn.SSHHost != "" {
-		connCfg.SSHTunnel = &tunnel.Config{
-			Host:          conn.SSHHost,
-			User:          conn.SSHUser,
-			Password:      conn.SSHPassword,
-			PrivateKeyPEM: conn.SSHPrivateKey,
-		}
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
 	}
 	sess, err := eng.Open(context.Background(), connCfg)
 	if err != nil {

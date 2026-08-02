@@ -55,8 +55,15 @@ func (Engine) Open(ctx context.Context, cfg engine.ConnConfig) (engine.Session, 
 	// SQLite's own client library defaults foreign_keys off for backward
 	// compatibility; turn it on so declared FKs are actually enforced and
 	// (more importantly for this tool) so PRAGMA foreign_key_list stays
-	// meaningful to the caller relying on it.
-	db.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+	// meaningful to the caller relying on it. A fresh timeout, not the
+	// ping-bounded pingCtx (see the mysql/postgres Open() equivalent).
+	fkCtx, fkCancel := context.WithTimeout(ctx, connectTimeout)
+	_, err = db.ExecContext(fkCtx, "PRAGMA foreign_keys = ON")
+	fkCancel()
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enabling foreign key enforcement: %w", err)
+	}
 	return &Session{db: db, path: cfg.URI}, nil
 }
 

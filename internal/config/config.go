@@ -4,9 +4,11 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Connection is a saved database connection profile.
@@ -134,6 +136,17 @@ func BackupsDir() (string, error) {
 	return b, nil
 }
 
+// SSHKnownHostsPath returns where SSH tunnel host-key fingerprints are
+// recorded for trust-on-first-use verification (see
+// internal/engine/tunnel's Config.KnownHostsPath).
+func SSHKnownHostsPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ssh_known_hosts.json"), nil
+}
+
 func filePath() (string, error) {
 	dir, err := Dir()
 	if err != nil {
@@ -166,7 +179,8 @@ func Load() (*Config, error) {
 // Save writes the config file. When a system keyring is available,
 // passwords are moved into it and the file keeps credential-stripped URIs;
 // otherwise full URIs are stored, protected only by the file's owner-only
-// permissions.
+// permissions. Writes go through a temp file + rename so a crash mid-write
+// can never leave config.json half-written and unparseable.
 func Save(cfg *Config) error {
 	path, err := filePath()
 	if err != nil {
@@ -177,7 +191,63 @@ func Save(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	return writeFileAtomic(path, data, 0o600)
+}
+
+// writeFileAtomic writes data to a temp file in the same directory as path
+// and renames it into place, so a reader never observes a partially
+// written file and a crash mid-write leaves the previous, complete
+// version in place rather than a truncated/corrupt one.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// errNoChange is a sentinel an Update mutate function can return to skip
+// the save (e.g. "nothing needed changing") without Update treating it as
+// a real error.
+var errNoChange = errors.New("config: no change")
+
+// updateMu serializes Update calls so a full load-mutate-save sequence
+// can't interleave with another one — e.g. two Wails RPC calls
+// (AddConnection, RemoveConnection, SwitchTenant, SaveAISettings) racing
+// on config.json, where a plain Load-then-Save per call site lets
+// whichever Save lands second silently discard the other's change.
+var updateMu sync.Mutex
+
+// Update loads the config, applies mutate to it, and saves the result,
+// holding a package-level lock for the whole sequence. mutate can return
+// errNoChange to abort without saving (not treated as an error), or any
+// other error to abort the same way but have it propagate to the caller.
+func Update(mutate func(*Config) error) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	if err := mutate(cfg); err != nil {
+		if errors.Is(err, errNoChange) {
+			return nil
+		}
+		return err
+	}
+	return Save(cfg)
 }
 
 // Find looks up a saved connection by name.

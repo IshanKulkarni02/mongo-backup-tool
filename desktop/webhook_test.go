@@ -7,35 +7,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
-
-	"github.com/IshanKulkarni02/dbhelm/internal/config"
-	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
-
-// newTestAppWithMongoConn registers a connection named connName pointing at
-// a real (test) mongod instance, for tests that need a working
-// engine.DocumentSession — e.g. InsertWebhookPayload, which only mongodb
-// implements.
-func newTestAppWithMongoConn(t *testing.T, connName string, readOnly bool) (*App, string) {
-	t.Helper()
-	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
-	uri := testmongod.Start(t, "")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	cfg.Connections = append(cfg.Connections, config.Connection{
-		Name: connName, URI: uri, Engine: "mongodb", ReadOnly: readOnly,
-	})
-	if err := config.Save(cfg); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	a := NewApp()
-	t.Cleanup(a.engines.Close)
-	return a, uri
-}
 
 // TestStartWebhookListenerReturnsAddrAndToken guards against #43: the
 // frontend needs both the bound (loopback) address and the auth token to
