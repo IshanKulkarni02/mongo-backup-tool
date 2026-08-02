@@ -23,6 +23,7 @@ import { JsonTree } from "../components/JsonTree";
 import { Select } from "../components/Select";
 import { useToast } from "../components/Toast";
 import { quoteIdent, sqlLiteral } from "../lib/sql";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./WebhookView.css";
 
@@ -194,6 +195,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const startDatabasesRequest = useStaleGuard();
+  const startCollectionsTablesRequest = useStaleGuard();
+  const startSchemaRequest = useStaleGuard();
 
   const activeConn = connections.find((c) => c.name === connection);
   const activeEngine = activeConn?.engine ?? "";
@@ -219,7 +223,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     TestConnection(connection).then((dbs) => {
+      if (isStale()) return;
       setDatabases(dbs);
       if (dbs.length > 0) setDatabase(dbs[0]);
     });
@@ -227,8 +233,9 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
 
   useEffect(() => {
     if (!connection || !database) return;
-    if (isMongo) ListCollections(connection, database).then(setCollections);
-    if (isSQL) ListTables(connection, database).then(setTables);
+    const isStale = startCollectionsTablesRequest();
+    if (isMongo) ListCollections(connection, database).then((cols) => { if (!isStale()) setCollections(cols); });
+    if (isSQL) ListTables(connection, database).then((tbls) => { if (!isStale()) setTables(tbls); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, activeEngine]);
 
@@ -237,7 +244,14 @@ function InsertPayloadModal({ request, onClose }: { request: WebhookRequest; onC
       setSchema(null);
       return;
     }
+    // Picking table "orders" then quickly re-picking "customers" before
+    // this GetTableSchema("orders") call returns must not let orders'
+    // columns/auto-mapping apply while `table` state already shows
+    // "customers" — submitSQL would otherwise build an INSERT INTO
+    // customers (...) using column names from orders' schema.
+    const isStale = startSchemaRequest();
     GetTableSchema(connection, database, table).then((s) => {
+      if (isStale()) return;
       setSchema(s);
       // Pre-fill the mapping with case-insensitive name matches between
       // the payload's top-level keys and the table's columns.

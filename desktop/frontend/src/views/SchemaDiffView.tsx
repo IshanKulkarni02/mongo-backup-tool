@@ -18,6 +18,7 @@ import { SegmentedControl } from "../components/SegmentedControl";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
 import { useToast } from "../components/Toast";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./SchemaDiffView.css";
 
@@ -38,16 +39,21 @@ function ConnDbPicker({
 }) {
   const [databases, setDatabases] = useState<string[]>([]);
   const toast = useToast();
+  const startDatabasesRequest = useStaleGuard();
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     TestConnection(connection)
       .then((dbs) => {
+        if (isStale()) return;
         setDatabases(dbs);
         if (dbs.length > 0) setDatabase(dbs[0]);
       })
-      .catch((e) => toast.push("error", String(e)));
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 

@@ -28,6 +28,7 @@ import { SegmentedControl } from "../components/SegmentedControl";
 import { useToast } from "../components/Toast";
 import { useUIMode } from "../lib/uiMode";
 import { quoteIdent, sqlLiteral, sqlValueForCell, buildSelectList } from "../lib/sql";
+import { useStaleGuard } from "../hooks/useStaleGuard";
 import "./BrowserView.css";
 import "./TableView.css";
 import "./WebhookView.css"; // shares the mapping-row layout ImportCSVModal reuses
@@ -96,13 +97,17 @@ export function TableView({
   }, []);
 
   const activeEngine = connections.find((c) => c.name === connection)?.engine ?? "postgres";
+  const startDatabasesRequest = useStaleGuard();
+  const startTablesRequest = useStaleGuard();
 
   useEffect(() => {
     if (!connection) return;
+    const isStale = startDatabasesRequest();
     setDatabases([]);
     setDatabase("");
     TestConnection(connection)
       .then((dbs) => {
+        if (isStale()) return;
         setDatabases(dbs);
         if (pendingTarget && pendingTarget.connection === connection && dbs.includes(pendingTarget.database)) {
           setDatabase(pendingTarget.database);
@@ -110,15 +115,22 @@ export function TableView({
           setDatabase(dbs[0]);
         }
       })
-      .catch((e) => toast.push("error", String(e)));
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
 
   const loadTables = useCallback(() => {
     if (!connection || !database) return;
+    const isStale = startTablesRequest();
     ListTables(connection, database)
-      .then(setTables)
-      .catch((e) => toast.push("error", String(e)));
+      .then((infos) => {
+        if (!isStale()) setTables(infos);
+      })
+      .catch((e) => {
+        if (!isStale()) toast.push("error", String(e));
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database]);
 
@@ -663,9 +675,16 @@ function RelationshipInspector({
   const [counts, setCounts] = useState<Record<string, number | "error">>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [childRows, setChildRows] = useState<engine.SQLResult | null>(null);
+  const startCountsRequest = useStaleGuard();
+  const startExpandRequest = useStaleGuard();
 
   useEffect(() => {
     if (!pkCell) return;
+    // One guard call covers every request this effect run fires (one per
+    // referencing table) — selecting a different row before any of them
+    // resolve must discard all of this run's responses together, not
+    // just the first one to land.
+    const isStale = startCountsRequest();
     setCounts({});
     setExpanded(null);
     setChildRows(null);
@@ -673,8 +692,12 @@ function RelationshipInspector({
       const ident = quoteIdent(engineId, ref.table);
       const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlValueForCell(pkCell, engineId)}`;
       RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`)
-        .then((r) => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length })))
-        .catch(() => setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" })));
+        .then((r) => {
+          if (!isStale()) setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: r.rows.length }));
+        })
+        .catch(() => {
+          if (!isStale()) setCounts((c) => ({ ...c, [`${ref.table}.${ref.column}`]: "error" }));
+        });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, database, engineId, pkCell?.display, referencingTables]);
@@ -686,13 +709,14 @@ function RelationshipInspector({
       setChildRows(null);
       return;
     }
+    const isStale = startExpandRequest();
     setExpanded(key);
     setChildRows(null);
     if (!pkCell) return;
     const ident = quoteIdent(engineId, ref.table);
     const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
     const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
-    setChildRows(r);
+    if (!isStale()) setChildRows(r);
   }
 
   if (referencingTables.length === 0 || !pkCell) return null;
