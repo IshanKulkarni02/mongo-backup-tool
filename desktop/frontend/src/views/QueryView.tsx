@@ -121,7 +121,16 @@ export function QueryView() {
     setRunning(true);
     setQueryError("");
     setExplain(null);
-    RunSQLQueryJob(connection, database, sqlText).then(setJobId);
+    RunSQLQueryJob(connection, database, sqlText)
+      .then(setJobId)
+      .catch((e) => {
+        // Without this, a rejection here left `running` stuck true
+        // forever (set just above) — the button stays showing "Cancel"
+        // permanently, and handleCancel does nothing since jobId was
+        // never set to cancel.
+        setRunning(false);
+        setQueryError(String(e));
+      });
   }
 
   async function executeStatement(text: string, confirmDatabaseName: string) {
@@ -148,12 +157,18 @@ export function QueryView() {
       runQuery();
       return;
     }
-    const classification = await ClassifySQL(trimmed);
-    if (classification.risk === "none") {
-      executeStatement(trimmed, "");
-      return;
+    try {
+      const classification = await ClassifySQL(trimmed);
+      if (classification.risk === "none") {
+        executeStatement(trimmed, "");
+        return;
+      }
+      setPending({ sql: trimmed, classification });
+    } catch (e) {
+      // Previously unhandled: clicking "Run" on a write statement did
+      // nothing visible if classification failed.
+      toast.push("error", String(e));
     }
-    setPending({ sql: trimmed, classification });
   }
 
   function handleCancel() {

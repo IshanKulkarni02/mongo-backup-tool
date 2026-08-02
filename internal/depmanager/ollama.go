@@ -30,12 +30,20 @@ type OllamaStatus struct {
 	Running   bool // the local API answered
 }
 
-// CheckOllama pings the local Ollama API and, if that doesn't answer,
-// falls back to checking whether the binary is merely installed but not
-// running (e.g. the user hasn't launched the app yet).
-func CheckOllama(ctx context.Context) OllamaStatus {
+// CheckOllama pings the Ollama API at host (or OllamaHost, the local
+// default, if host is "") and, if that doesn't answer, falls back to
+// checking whether the binary is merely installed but not running (e.g.
+// the user hasn't launched the app yet). The installed-but-not-running
+// fallback only makes sense for the local default — a configured remote
+// host has no local binary to check, so a failed ping there just means
+// "not reachable," not "not installed."
+func CheckOllama(ctx context.Context, host string) OllamaStatus {
+	isDefault := host == ""
+	if isDefault {
+		host = OllamaHost
+	}
 	client := http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaHost+"/api/version", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/version", nil)
 	if err == nil {
 		if resp, err := client.Do(req); err == nil {
 			resp.Body.Close()
@@ -43,6 +51,13 @@ func CheckOllama(ctx context.Context) OllamaStatus {
 				return OllamaStatus{Installed: true, Running: true}
 			}
 		}
+	}
+	if !isDefault {
+		// A configured remote host that didn't answer isn't running, and
+		// whether *this* machine happens to have the ollama binary on
+		// PATH says nothing about the remote one — reporting Installed
+		// based on a local LookPath here would be misleading.
+		return OllamaStatus{Installed: false, Running: false}
 	}
 	_, lookErr := exec.LookPath("ollama")
 	return OllamaStatus{Installed: lookErr == nil, Running: false}

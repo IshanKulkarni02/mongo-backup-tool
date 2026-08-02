@@ -113,6 +113,8 @@ func (s *sharedDecoder) decompress(data []byte) ([]byte, error) {
 }
 
 func (s *sharedDecoder) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.dec.Close()
 }
 

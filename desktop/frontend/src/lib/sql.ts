@@ -28,12 +28,26 @@ export function quoteIdent(engineId: string, name: string): string {
 // pass to (incorrectly) re-escape, and backslash-escaping never introduces
 // a quote for the second pass to double.
 export function sqlLiteral(value: string, type: string, engineId?: string): string {
-  if (value.trim().toUpperCase() === "NULL") return "NULL";
   if (type === "number" && /^-?\d+(\.\d+)?$/.test(value.trim())) return value.trim();
   let escaped = value;
   if (engineId === "mysql") escaped = escaped.replace(/\\/g, "\\\\");
   escaped = escaped.replace(/'/g, "''");
   return "'" + escaped + "'";
+}
+
+// sqlValueForCell renders a query-result Cell for interpolation into a
+// WHERE clause, using the cell's own `type` (the actual, structural
+// signal for a NULL SQL value — see engine.CellNull) to decide NULL vs. a
+// literal — never inferring nullness from what the cell's `display` text
+// happens to say. sqlLiteral used to do exactly that (treating the
+// literal text "NULL", any case, as the SQL keyword), which meant a text
+// column that legitimately stores the string "null" got silently nulled
+// out instead of matched/set as that string. A cell that's genuinely
+// NULL always has type "null" regardless of its display text, so keying
+// off the type here is both correct and unambiguous.
+export function sqlValueForCell(cell: { display: string; type: string }, engineId?: string): string {
+  if (cell.type === "null") return "NULL";
+  return sqlLiteral(cell.display, cell.type, engineId);
 }
 
 // isGeoType reports whether a Postgres column's data type is a PostGIS

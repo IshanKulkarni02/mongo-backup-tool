@@ -2,8 +2,113 @@ package snapshot
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+// TestIsAlreadyExistsError guards against #23: a blanket
+// strings.Contains(msg, "duplicate") also matched unrelated errors where
+// CREATE UNIQUE INDEX fails because existing row data violates the new
+// constraint — a real data problem, not "index already exists" — and
+// recreateSQLIndexes silently swallowed those too, leaving the restore
+// reporting success with the index never recreated and the underlying
+// duplicate-data problem hidden.
+func TestIsAlreadyExistsError(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want bool
+	}{
+		{"postgres already exists", `pq: relation "idx_name" already exists`, true},
+		{"sqlite already exists", `index idx_name already exists`, true},
+		{"mysql already exists", `Error 1061 (42000): Duplicate key name 'idx_name'`, true},
+
+		// Real data problems that must NOT be swallowed as "already exists".
+		{"mysql duplicate row data", `Error 1062 (23000): Duplicate entry 'x' for key 'y'`, false},
+		{"postgres duplicate row data", `pq: could not create unique index "idx_name" (SQLSTATE 23505): Key (col)=(x) is duplicated.`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isAlreadyExistsError(errors.New(c.msg)); got != c.want {
+				t.Errorf("isAlreadyExistsError(%q) = %v, want %v", c.msg, got, c.want)
+			}
+		})
+	}
+}
+
+// TestSQLStringLiteral guards against #16: MySQL treats \ as an escape
+// character inside a single-quoted string literal by default, so a
+// literal backslash in the value must itself be doubled there — but
+// Postgres and SQLite treat \ as an ordinary character in a plain '...'
+// literal, so escaping it for them would be incorrect, not just
+// unnecessary.
+func TestSQLStringLiteral(t *testing.T) {
+	cases := []struct {
+		name     string
+		engineID string
+		in       string
+		want     string
+	}{
+		{"mysql backslash", "mysql", `C:\temp\new`, `'C:\\temp\\new'`},
+		{"mysql single quote", "mysql", `it's`, `'it''s'`},
+		{"mysql backslash and quote", "mysql", `a\b'c`, `'a\\b''c'`},
+		{"mysql odd trailing backslash", "mysql", `a\`, `'a\\'`},
+		{"postgres backslash left alone", "postgres", `C:\temp\new`, `'C:\temp\new'`},
+		{"postgres single quote", "postgres", `it's`, `'it''s'`},
+		{"sqlite backslash left alone", "sqlite", `C:\temp\new`, `'C:\temp\new'`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := sqlStringLiteral(c.engineID, c.in); got != c.want {
+				t.Errorf("sqlStringLiteral(%q, %q) = %q, want %q", c.engineID, c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestSQLLiteralForRestoreEscapesMySQLBackslash confirms
+// sqlLiteralForRestore's string-value path actually reaches
+// sqlStringLiteral's MySQL escaping, not just the helper in isolation.
+func TestSQLLiteralForRestoreEscapesMySQLBackslash(t *testing.T) {
+	got := sqlLiteralForRestore("mysql", `C:\temp\new`, false)
+	want := `'C:\\temp\\new'`
+	if got != want {
+		t.Errorf("sqlLiteralForRestore(mysql, ...) = %q, want %q", got, want)
+	}
+}
+
+// TestIsBinaryDataType guards against #15: information_schema.columns.
+// data_type is reported lowercase for both Postgres ("bytea") and MySQL
+// ("blob"/"binary"/"varbinary") — only the SQLite test schema happens to
+// declare BLOB uppercase, so a plain-uppercase comparison here matched in
+// tests but never matched a real Postgres/MySQL binary column, silently
+// corrupting (MySQL) or outright failing (Postgres) their restore.
+func TestIsBinaryDataType(t *testing.T) {
+	cases := []struct {
+		dbType string
+		want   bool
+	}{
+		{"bytea", true}, // Postgres, as reported
+		{"BYTEA", true},
+		{"blob", true}, // MySQL, as reported
+		{"BLOB", true},
+		{"binary", true}, // MySQL, as reported
+		{"BINARY", true},
+		{"varbinary", true}, // MySQL, as reported
+		{"VARBINARY", true},
+		{"VarBinary", true},
+		{"text", false},
+		{"integer", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.dbType, func(t *testing.T) {
+			if got := isBinaryDataType(c.dbType); got != c.want {
+				t.Errorf("isBinaryDataType(%q) = %v, want %v", c.dbType, got, c.want)
+			}
+		})
+	}
+}
 
 func TestRestoreSQLRoundTripBasic(t *testing.T) {
 	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())

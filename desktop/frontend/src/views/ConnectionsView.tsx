@@ -36,7 +36,10 @@ export function ConnectionsView({
   const [secureStorage, setSecureStorage] = useState<boolean | null>(null);
   const toast = useToast();
 
-  const load = () => ListConnections().then(setConnections);
+  const load = () =>
+    ListConnections()
+      .then(setConnections)
+      .catch((e) => toast.push("error", String(e)));
 
   useEffect(() => {
     load();
@@ -165,6 +168,11 @@ export function ConnectionsView({
                 {result === "error" && (
                   <div className="conn-dbs conn-dbs-error">
                     {mode === "beginner" ? "Couldn't connect — check the details and try again" : "Connection failed"}
+                    {mode === "beginner" && (
+                      <button type="button" className="conn-retry-link" onClick={() => handleTest(c.name)}>
+                        Try again
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -285,7 +293,7 @@ function SwitchTenantModal({
   );
 }
 
-const ENGINE_LABELS: Record<string, string> = {
+export const ENGINE_LABELS: Record<string, string> = {
   mongodb: "MongoDB",
   postgres: "PostgreSQL",
   mysql: "MySQL",
@@ -374,6 +382,16 @@ function GuidedAddConnectionModal({ onClose, onAdded }: { onClose: () => void; o
     const uri = engine === "sqlite" ? filePath : buildGuidedURI(engine, { host, port, user, password, dbName, useSrv });
     if (!uri || (engine !== "sqlite" && !host)) {
       setError(engine === "sqlite" ? "Choose a database file" : "At least the address (host) is required");
+      return;
+    }
+    // Postgres/MySQL always connect to one specific database, unlike Mongo
+    // (where an empty path just means "server default") — an empty dbName
+    // here would build a URI with a blank db segment and surface a raw
+    // backend connection error, exactly what this guided flow exists to
+    // avoid. The "Database name" field label below only marks itself
+    // "(optional)" for mongodb, so this matches what the label promises.
+    if ((engine === "postgres" || engine === "mysql") && !dbName) {
+      setError("Database name is required");
       return;
     }
     setBusy(true);
@@ -502,6 +520,19 @@ function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded
   useEffect(() => {
     EngineIDs().then(setAvailableEngines).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (engine === "postgres" || engine === "mysql") return;
+    // SSH tunneling only applies to postgres/mysql — without this, the
+    // checkbox that controls showSSH disappears (it's only rendered for
+    // those engines) while the SSH fields stay visible and their stale
+    // values still get submitted with the new engine.
+    setShowSSH(false);
+    setSshHost("");
+    setSshUser("");
+    setSshPassword("");
+    setSshPrivateKey("");
+  }, [engine]);
 
   async function browseSQLiteFile() {
     try {

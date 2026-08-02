@@ -315,13 +315,30 @@ func sqlLiteralForRestore(engineID string, value any, isBinary bool) string {
 		}
 		return "FALSE"
 	case string:
-		return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		return sqlStringLiteral(engineID, v)
 	default:
 		// Shouldn't happen for a scalar SQL column value, but fail safe
 		// rather than panic on an unexpected shape.
 		b, _ := json.Marshal(v)
-		return "'" + strings.ReplaceAll(string(b), "'", "''") + "'"
+		return sqlStringLiteral(engineID, string(b))
 	}
+}
+
+// sqlStringLiteral renders s as a single-quoted SQL string literal in
+// engineID's own escaping rules. MySQL treats \ as an escape character
+// inside a single-quoted literal by default (no NO_BACKSLASH_ESCAPES mode
+// is set anywhere in internal/engine/mysql), so a literal backslash must
+// itself be doubled there — otherwise a value like a Windows path
+// (C:\temp\new) gets reinterpreted (\t becomes a tab), or an odd trailing
+// backslash count unbalances the generated statement's quoting entirely.
+// Postgres (standard_conforming_strings, the default since 9.1) and
+// SQLite both treat \ as an ordinary character in a plain '...' literal,
+// so escaping it there would be incorrect, not just unnecessary.
+func sqlStringLiteral(engineID, s string) string {
+	if engineID == "mysql" {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+	}
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // hexBinaryLiteral renders hexStr as a binary literal in engineID's own
@@ -389,9 +406,21 @@ func recreateSQLIndexes(ctx context.Context, sess engine.SQLSession, database st
 	return nil
 }
 
+// isAlreadyExistsError reports whether err is the specific "this index
+// already exists" case (tolerated by recreateSQLIndexes), as opposed to a
+// genuinely different failure that happens to also mention "duplicate" —
+// most importantly a unique-index CREATE failing because existing row
+// data violates the new constraint: MySQL's "Duplicate entry 'x' for key
+// 'y'" (error 1062) or Postgres's "...Key (col)=(x) is duplicated."
+// (SQLSTATE 23505), neither of which contain "already exists" or MySQL's
+// specific already-exists phrase "duplicate key name" (error 1061,
+// "Duplicate key name 'y'"). A previous blanket strings.Contains(msg,
+// "duplicate") also matched those data-violation errors and silently
+// swallowed them, so the index was never recreated and the underlying
+// duplicate-data problem was hidden from the user.
 func isAlreadyExistsError(err error) bool {
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate key name") || strings.Contains(msg, "duplicate")
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate key name")
 }
 
 func quoteIdentSQL(engineID, name string) string {
@@ -402,7 +431,12 @@ func quoteIdentSQL(engineID, name string) string {
 }
 
 func isBinaryDataType(dbType string) bool {
-	switch dbType {
+	// information_schema.columns.data_type is reported lowercase for both
+	// Postgres ("bytea") and MySQL ("blob"/"binary"/"varbinary"); only the
+	// SQLite test schema happens to declare BLOB uppercase, which is why a
+	// plain-uppercase comparison here worked in tests but never matched
+	// real Postgres/MySQL binary columns.
+	switch strings.ToUpper(dbType) {
 	case "BYTEA", "BLOB", "BINARY", "VARBINARY":
 		return true
 	}

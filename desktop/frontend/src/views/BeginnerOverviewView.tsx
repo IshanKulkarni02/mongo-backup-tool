@@ -5,6 +5,7 @@ import { main } from "../../wailsjs/go/models";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { Skeleton } from "../components/Skeleton";
+import { ENGINE_LABELS } from "./ConnectionsView";
 import "./BeginnerOverviewView.css";
 
 type DbSummary = { name: string; groups: number; records: number };
@@ -111,7 +112,7 @@ export function BeginnerOverviewView({ onOpenDatabase }: { onOpenDatabase?: (con
           <Card key={s.conn.name} className="overview-conn-card">
             <div className="overview-conn-name">
               {s.conn.name}
-              <span className="overview-engine-badge">{s.conn.engine}</span>
+              <span className="overview-engine-badge">{ENGINE_LABELS[s.conn.engine] ?? s.conn.engine}</span>
             </div>
             {s.databases === null && <Skeleton height={32} />}
             {s.databases === "error" && <div className="overview-error">Couldn't connect</div>}

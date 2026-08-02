@@ -20,22 +20,22 @@ func queryHistoryStore() (*queryhistory.Store, error) {
 	return queryhistory.Load(dir)
 }
 
-func saveQueryHistoryStore(s *queryhistory.Store) error {
+// updateQueryHistoryStore loads the history store, applies mutate to it,
+// and saves the result atomically under queryhistory's package lock — so
+// two queries finishing close together (each dispatched in its own Wails
+// RPC goroutine) can't lose one's appended entry to the other's Save.
+func updateQueryHistoryStore(mutate func(*queryhistory.Store) error) error {
 	dir, err := config.Dir()
 	if err != nil {
 		return err
 	}
-	return queryhistory.Save(dir, s)
+	return queryhistory.Update(dir, mutate)
 }
 
 // recordQueryHistory appends a query-history entry. Best-effort: a failure
 // to load/save the history log is swallowed rather than surfaced, since it
 // must never make an otherwise-successful query call fail.
 func recordQueryHistory(connectionName, database, sqlText string, rowCount int, dur time.Duration, runErr error) {
-	s, err := queryHistoryStore()
-	if err != nil {
-		return
-	}
 	entry := queryhistory.Entry{
 		ID:         uuid.NewString(),
 		Connection: connectionName,
@@ -49,8 +49,10 @@ func recordQueryHistory(connectionName, database, sqlText string, rowCount int, 
 	if runErr != nil {
 		entry.ErrorMessage = runErr.Error()
 	}
-	s.Append(entry)
-	_ = saveQueryHistoryStore(s)
+	_ = updateQueryHistoryStore(func(s *queryhistory.Store) error {
+		s.Append(entry)
+		return nil
+	})
 }
 
 // ListQueryHistory returns the most recent query-history entries for a
@@ -65,12 +67,10 @@ func (a *App) ListQueryHistory(connectionName string, limit int) ([]queryhistory
 
 // ClearQueryHistory empties the query-history log.
 func (a *App) ClearQueryHistory() error {
-	s, err := queryHistoryStore()
-	if err != nil {
-		return err
-	}
-	s.Clear()
-	return saveQueryHistoryStore(s)
+	return updateQueryHistoryStore(func(s *queryhistory.Store) error {
+		s.Clear()
+		return nil
+	})
 }
 
 // RerunFromHistory re-runs a history entry's stored SQL text and returns
