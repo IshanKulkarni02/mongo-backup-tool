@@ -229,7 +229,9 @@ func (a *App) CheckOllama(host string) depmanager.OllamaStatus {
 // job; output lines are collected into the job's Result on completion.
 func (a *App) InstallOllama() string {
 	j := a.jobs.start("ollama-install")
+	a.jobs.inFlight.Add(1)
 	go func() {
+		defer a.jobs.inFlight.Done()
 		var output []string
 		err := depmanager.AutoInstallOllama(context.Background(), func(line string) {
 			output = append(output, line)
@@ -254,7 +256,9 @@ func (a *App) PullOllamaModel(host, model string) string {
 	a.jobs.mu.Lock()
 	a.jobs.cancels[j.ID] = cancel
 	a.jobs.mu.Unlock()
+	a.jobs.inFlight.Add(1)
 	go func() {
+		defer a.jobs.inFlight.Done()
 		err := ai.PullModel(ctx, host, model, func(p ai.PullProgress) {
 			a.jobs.progress(j.ID, p.Status, p.Completed, p.Total, "")
 		})
