@@ -83,6 +83,12 @@ type Model struct {
 	connections []config.Connection
 	connCursor  int
 	connErr     string
+	// connWarning is shown once after a connection save when no OS
+	// keyring is available (secrets.UnavailableWarning) — the CLI already
+	// warns on `connection add`/`list` in this case; the TUI's own
+	// add-connection flow had no equivalent, silently persisting
+	// credentials in plaintext with no indication (#61).
+	connWarning string
 
 	// screenAddConnection
 	nameInput   textinput.Model

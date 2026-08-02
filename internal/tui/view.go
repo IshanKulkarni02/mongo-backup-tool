@@ -108,6 +108,9 @@ func (m Model) viewConnections() string {
 	if m.connErr != "" {
 		b.WriteString(errorStyle.Render("Error: "+m.connErr) + "\n\n")
 	}
+	if m.connWarning != "" {
+		b.WriteString(warnStyle.Render("Warning: "+m.connWarning) + "\n\n")
+	}
 	if len(m.connections) == 0 {
 		b.WriteString(mutedStyle.Render("No connections yet. Press 'a' to add one.") + "\n")
 	}
