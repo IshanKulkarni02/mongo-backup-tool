@@ -50,10 +50,9 @@ func (a *App) SaveAISettings(providerID, model, ollamaHost, apiKey string) error
 		cfg.AI.Model = model
 		cfg.AI.OllamaHost = ollamaHost
 		if apiKey != "" {
-			if err := config.SetAIAPIKey(apiKey); err != nil {
+			if err := config.SetAIAPIKey(cfg, apiKey); err != nil {
 				return fmt.Errorf("saving API key: %w", err)
 			}
-			cfg.AI.HasAPIKey = true
 		}
 		return nil
 	})
@@ -66,7 +65,7 @@ func (a *App) providerFromSettings() (ai.Provider, error) {
 	}
 	var apiKey string
 	if cfg.AI.HasAPIKey {
-		apiKey, _ = config.AIAPIKey()
+		apiKey, _ = config.AIAPIKey(cfg)
 	}
 	return ai.NewProvider(ai.Config{
 		ProviderID: cfg.AI.ProviderID, Model: cfg.AI.Model, APIKey: apiKey, OllamaHost: cfg.AI.OllamaHost,

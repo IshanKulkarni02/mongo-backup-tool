@@ -86,6 +86,42 @@ func TestSaveKeepsFullURIWithoutKeyring(t *testing.T) {
 	}
 }
 
+// TestSavePreservesAIAndLauncherSettings guards a bug found while fixing
+// #80: stripCredentials only ever constructed its persisted copy with
+// Connections set, silently dropping AI and Launcher from every save
+// regardless of whether a keyring was available — neither field holds
+// anything this function needs to strip, so there was no reason for them
+// to be lost. In practice this meant the AI provider/model settings and
+// the terminal-vs-desktop launcher choice never actually survived a
+// restart.
+func TestSavePreservesAIAndLauncherSettings(t *testing.T) {
+	withTempConfigDir(t)
+	secrets.MockInit()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cfg.AI.ProviderID = "openai"
+	cfg.AI.Model = "gpt-4"
+	cfg.AI.OllamaHost = "http://localhost:11434"
+	cfg.Launcher.Choice = "desktop"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if reloaded.AI.ProviderID != "openai" || reloaded.AI.Model != "gpt-4" || reloaded.AI.OllamaHost != "http://localhost:11434" {
+		t.Fatalf("AI settings did not survive Save/Load: got %+v", reloaded.AI)
+	}
+	if reloaded.Launcher.Choice != "desktop" {
+		t.Fatalf("Launcher.Choice did not survive Save/Load: got %+v", reloaded.Launcher)
+	}
+}
+
 func TestMigrateCredentialsMovesExistingPlaintextPassword(t *testing.T) {
 	withTempConfigDir(t)
 	secrets.MockInit()
