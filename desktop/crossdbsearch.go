@@ -35,14 +35,17 @@ const crossSearchSampleLimit = 50
 // the result ([]CrossSearchMatch) arrives via "job:update", like any other
 // job. Mirrors PullOllamaModel's shape for wiring a job ID into a
 // progress-reporting closure — jobManager.runCancelable doesn't expose the
-// ID to its callback, so this calls jobs.start/cancels/finish directly.
+// ID to its callback, so this calls jobs.start/cancels/finish directly
+// (including inFlight.Add/Done — see its doc comment in jobs.go).
 func (a *App) RunCrossDatabaseSearch(term string) string {
 	j := a.jobs.start("cross-db-search")
 	ctx, cancel := context.WithCancel(context.Background())
 	a.jobs.mu.Lock()
 	a.jobs.cancels[j.ID] = cancel
 	a.jobs.mu.Unlock()
+	a.jobs.inFlight.Add(1)
 	go func() {
+		defer a.jobs.inFlight.Done()
 		matches, err := a.crossDatabaseSearch(ctx, j.ID, term)
 		a.jobs.mu.Lock()
 		delete(a.jobs.cancels, j.ID)

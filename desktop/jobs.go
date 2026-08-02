@@ -43,10 +43,14 @@ type jobManager struct {
 	onUpdate   func(Job) // set by App.startup once the Wails context exists
 	onProgress func(JobProgress)
 
-	// inFlight tracks every job goroutine started via run/runCancelable
-	// that hasn't finished yet, so shutdown can wait for them instead of
-	// tearing down engine connections out from under a job still using
-	// them.
+	// inFlight tracks every job goroutine that hasn't finished yet, so
+	// shutdown can wait for them instead of tearing down engine
+	// connections out from under a job still using them. run/runCancelable
+	// manage it automatically; a caller that needs a progress-reporting
+	// closure with the job ID in scope (InstallOllama, PullOllamaModel,
+	// RunCrossDatabaseSearch — runCancelable's fn signature has no way to
+	// hand the ID back in) must Add(1)/defer Done() itself instead of
+	// going through those helpers.
 	inFlight sync.WaitGroup
 }
 
