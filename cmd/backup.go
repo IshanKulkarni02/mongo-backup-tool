@@ -76,19 +76,17 @@ func RunBackup(connName, dbName string) (string, error) {
 		size = info.Size()
 	}
 
-	idx, err := store.Load(backupsDir)
-	if err != nil {
-		return "", cleanupOrphanedArchive(archivePath, err)
-	}
-	idx.Backups = append(idx.Backups, store.Backup{
-		ID:         id,
-		Connection: connName,
-		Database:   dbName,
-		FileName:   fileName,
-		SizeBytes:  size,
-		CreatedAt:  time.Now().Format(time.RFC3339),
-	})
-	if err := store.Save(backupsDir, idx); err != nil {
+	if err := store.Update(backupsDir, func(idx *store.Index) error {
+		idx.Backups = append(idx.Backups, store.Backup{
+			ID:         id,
+			Connection: connName,
+			Database:   dbName,
+			FileName:   fileName,
+			SizeBytes:  size,
+			CreatedAt:  time.Now().Format(time.RFC3339),
+		})
+		return nil
+	}); err != nil {
 		return "", cleanupOrphanedArchive(archivePath, err)
 	}
 
