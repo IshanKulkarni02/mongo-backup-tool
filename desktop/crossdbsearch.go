@@ -74,7 +74,13 @@ func (a *App) crossDatabaseSearch(ctx context.Context, jobID, term string) ([]Cr
 		if err != nil {
 			continue
 		}
-		databases, err := sess.ListDatabases(ctx)
+		// testConnectionNames dispatches to ListSchemas for an
+		// engine.SchemaLister (Postgres, whose SQLSession "database"
+		// parameter actually means schema — see desktop/connections.go's
+		// TestConnection doc comment) instead of ListDatabases, whose real
+		// sibling database names would never match a schema and would
+		// silently zero out every Postgres connection's search results.
+		databases, err := testConnectionNames(ctx, sess)
 		if err != nil {
 			release()
 			continue
