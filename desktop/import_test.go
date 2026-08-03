@@ -27,21 +27,29 @@ func TestImportQuoteIdent(t *testing.T) {
 
 func TestImportLiteral(t *testing.T) {
 	cases := []struct {
-		value string
-		want  string
+		engineID string
+		value    string
+		want     string
 	}{
-		{"hello", "'hello'"},
-		{"it's", "'it''s'"},
-		{"42", "42"},
-		{"-3.14", "-3.14"},
-		{"NULL", "NULL"},
-		{"null", "NULL"},
-		{"", "''"},
-		{"007", "007"}, // matches the numeric regex — deliberately not re-parsed/reformatted
+		{"postgres", "hello", "'hello'"},
+		{"postgres", "it's", "'it''s'"},
+		{"postgres", "42", "42"},
+		{"postgres", "-3.14", "-3.14"},
+		{"postgres", "NULL", "NULL"},
+		{"postgres", "null", "NULL"},
+		{"postgres", "", "''"},
+		{"postgres", "007", "007"}, // matches the numeric regex — deliberately not re-parsed/reformatted
+		// #166: MySQL treats "\" as a string escape character by default,
+		// so a value containing one must have it escaped first, before
+		// quote-doubling — but only for MySQL, since Postgres/SQLite don't
+		// treat "\" specially in standard-conforming-strings mode.
+		{"mysql", `C:\temp\new`, `'C:\\temp\\new'`},
+		{"postgres", `C:\temp\new`, `'C:\temp\new'`},
+		{"mysql", `trailing\`, `'trailing\\'`},
 	}
 	for _, c := range cases {
-		if got := importLiteral(c.value); got != c.want {
-			t.Errorf("importLiteral(%q) = %q, want %q", c.value, got, c.want)
+		if got := importLiteral(c.engineID, c.value); got != c.want {
+			t.Errorf("importLiteral(%q, %q) = %q, want %q", c.engineID, c.value, got, c.want)
 		}
 	}
 }

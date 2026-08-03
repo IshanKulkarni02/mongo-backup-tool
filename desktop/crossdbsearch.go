@@ -103,9 +103,22 @@ func (a *App) crossDatabaseSearch(ctx context.Context, jobID, term string) ([]Cr
 	return matches, nil
 }
 
+// likeSearchPattern renders term as a quoted `%term%` LIKE pattern.
+// Defensive escaping (quotes doubled, plus backslashes doubled for
+// MySQL), same bug class and fix as importLiteral in desktop/import.go:
+// MySQL treats "\" as a string escape character by default, so a search
+// term containing one must have it escaped first, before quote-doubling.
+func likeSearchPattern(engineID, term string) string {
+	escaped := term
+	if engineID == "mysql" {
+		escaped = strings.ReplaceAll(escaped, `\`, `\\`)
+	}
+	return "'%" + strings.ReplaceAll(escaped, "'", "''") + "%'"
+}
+
 func searchSQLNamespaces(ctx context.Context, sess engine.SQLSession, engineID, connName, database string, namespaces []engine.NamespaceInfo, term string) []CrossSearchMatch {
 	out := []CrossSearchMatch{}
-	pattern := "'%" + strings.ReplaceAll(term, "'", "''") + "%'"
+	pattern := likeSearchPattern(engineID, term)
 	for _, ns := range namespaces {
 		select {
 		case <-ctx.Done():

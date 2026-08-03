@@ -49,12 +49,19 @@ func importQuoteIdent(engineID, name string) string {
 }
 
 // importLiteral renders a CSV cell for interpolation into an INSERT
-// statement. Defensive escaping (quotes doubled), not parameterized-query
-// safety — the same tradeoff desktop/frontend/src/lib/sql.ts's sqlLiteral
-// makes: acceptable because the statement runs against the user's own
-// connection through the same Safe Mode path as any other write, not
-// against input from someone else.
-func importLiteral(value string) string {
+// statement. Defensive escaping (quotes doubled, plus backslashes doubled
+// for MySQL), not parameterized-query safety — the same tradeoff
+// desktop/frontend/src/lib/sql.ts's sqlLiteral makes: acceptable because
+// the statement runs against the user's own connection through the same
+// Safe Mode path as any other write, not against input from someone else.
+// MySQL treats "\" as a string escape character by default (no
+// NO_BACKSLASH_ESCAPES set anywhere in this codebase's MySQL
+// connections), so a cell value containing a backslash must have it
+// escaped first, before quote-doubling — otherwise a value ending in an
+// unescaped backslash lets the closing quote (or a quote introduced by
+// doubling) be consumed as an escaped character instead of terminating
+// the literal, corrupting the generated statement.
+func importLiteral(engineID, value string) string {
 	trimmed := strings.TrimSpace(value)
 	if strings.EqualFold(trimmed, "NULL") {
 		return "NULL"
@@ -62,7 +69,11 @@ func importLiteral(value string) string {
 	if importNumericRe.MatchString(trimmed) {
 		return trimmed
 	}
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	escaped := value
+	if engineID == "mysql" {
+		escaped = strings.ReplaceAll(escaped, `\`, `\\`)
+	}
+	return "'" + strings.ReplaceAll(escaped, "'", "''") + "'"
 }
 
 // ImportCSV bulk-inserts a CSV file's rows into table, one INSERT per row.
@@ -158,7 +169,7 @@ func (a *App) ImportCSV(connectionName, database, table, csvPath, engineID strin
 				vals[i] = "NULL"
 				continue
 			}
-			vals[i] = importLiteral(record[m.csvIndex])
+			vals[i] = importLiteral(engineID, record[m.csvIndex])
 		}
 		sqlText := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", ident, colList, strings.Join(vals, ", "))
 		if _, err := sess.Execute(ctx, database, sqlText); err != nil {

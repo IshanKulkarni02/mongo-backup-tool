@@ -6,6 +6,32 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
 
+// TestLikeSearchPatternEscapesMySQLBackslash is the regression test for
+// #166: cross-database search's LIKE pattern doubled single quotes but
+// never escaped backslashes, the same bug #16 fixed for the snapshot-
+// restore path. MySQL treats "\" as a string escape character by
+// default, so an unescaped backslash in the search term corrupts the
+// generated pattern or breaks out of the string literal.
+func TestLikeSearchPatternEscapesMySQLBackslash(t *testing.T) {
+	cases := []struct {
+		engineID string
+		term     string
+		want     string
+	}{
+		{"postgres", "hello", "'%hello%'"},
+		{"postgres", "it's", "'%it''s%'"},
+		{"postgres", `C:\temp`, `'%C:\temp%'`},
+		{"mysql", `C:\temp`, `'%C:\\temp%'`},
+		{"mysql", `trailing\`, `'%trailing\\%'`},
+		{"sqlite", `C:\temp`, `'%C:\temp%'`},
+	}
+	for _, c := range cases {
+		if got := likeSearchPattern(c.engineID, c.term); got != c.want {
+			t.Errorf("likeSearchPattern(%q, %q) = %q, want %q", c.engineID, c.term, got, c.want)
+		}
+	}
+}
+
 func TestInferFieldNames(t *testing.T) {
 	docs := []string{
 		`{"name": "Ada", "email": "ada@example.com"}`,
