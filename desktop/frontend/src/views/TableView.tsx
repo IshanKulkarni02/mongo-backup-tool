@@ -677,6 +677,7 @@ function RelationshipInspector({
   const [childRows, setChildRows] = useState<engine.SQLResult | null>(null);
   const startCountsRequest = useStaleGuard();
   const startExpandRequest = useStaleGuard();
+  const toast = useToast();
 
   useEffect(() => {
     if (!pkCell) return;
@@ -715,8 +716,14 @@ function RelationshipInspector({
     if (!pkCell) return;
     const ident = quoteIdent(engineId, ref.table);
     const whereClause = `${quoteIdent(engineId, ref.column)} = ${sqlLiteral(pkCell.display, pkCell.type, engineId)}`;
-    const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
-    if (!isStale()) setChildRows(r);
+    try {
+      const r = await RunSQLQuery(connection, database, `SELECT * FROM ${ident} WHERE ${whereClause} LIMIT 10`);
+      if (!isStale()) setChildRows(r);
+    } catch (e) {
+      if (isStale()) return;
+      toast.push("error", String(e));
+      setExpanded(null);
+    }
   }
 
   if (referencingTables.length === 0 || !pkCell) return null;
