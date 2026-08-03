@@ -180,6 +180,21 @@ var connectionRemoveCmd = &cobra.Command{
 	},
 }
 
+// connectionNames picks what to show as the browsable "database" list for
+// an already-pinged sess: an engine.SchemaLister's ListSchemas if the
+// engine implements it (Postgres, whose SQLSession "database" parameter
+// actually means schema within the DSN's fixed database), otherwise the
+// base ListDatabases. Mirrors desktop/connections.go's testConnectionNames
+// and internal/tui/messages.go's connectionNames — without this,
+// Postgres's real sibling database names would be shown instead of its
+// schemas, misleading the user about what to pass as --db elsewhere.
+func connectionNames(ctx context.Context, sess engine.Session) ([]string, error) {
+	if sl, ok := sess.(engine.SchemaLister); ok {
+		return sl.ListSchemas(ctx)
+	}
+	return sess.ListDatabases(ctx)
+}
+
 var connectionTestCmd = &cobra.Command{
 	Use:   "test <name>",
 	Short: "Test a saved connection and list its databases",
@@ -205,7 +220,7 @@ var connectionTestCmd = &cobra.Command{
 		if err := sess.Ping(context.Background()); err != nil {
 			return fmt.Errorf("connection failed: %w", err)
 		}
-		dbs, err := sess.ListDatabases(context.Background())
+		dbs, err := connectionNames(context.Background(), sess)
 		if err != nil {
 			return fmt.Errorf("connection failed: %w", err)
 		}
