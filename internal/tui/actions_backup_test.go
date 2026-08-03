@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/IshanKulkarni02/dbhelm/internal/config"
+	"github.com/IshanKulkarni02/dbhelm/internal/store"
+	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
 
 // TestCleanupOrphanedArchiveRemovesFileAndWrapsCause is the regression
@@ -88,5 +92,73 @@ func TestCleanupOrphanedArchiveReportsRemovalFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), archivePath) {
 		t.Fatalf("expected the error to mention the archive path %q, got: %v", archivePath, err)
+	}
+}
+
+// TestRunBackupSanitizesTraversalInConnName is the regression test for
+// #165: runBackup built its archive filename directly from connName with
+// no sanitization, unlike cmd.RunBackup and desktop's CreateBackup, which
+// both wrap it in pathsafety.SanitizeComponent. Unlike the database name
+// (validated by MongoDB's own namespace rules, which reject "/" and "."),
+// a saved connection's Name is an arbitrary user-chosen string in
+// config.json with no character restrictions at all, so it's the actual
+// reachable traversal vector — a connection named with a path-traversal
+// sequence lets the resulting archive escape the managed backups
+// directory entirely.
+func TestRunBackupSanitizesTraversalInConnName(t *testing.T) {
+	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
+	uri := testmongod.Start(t, "")
+
+	backupsDir, err := config.BackupsDir()
+	if err != nil {
+		t.Fatalf("BackupsDir: %v", err)
+	}
+
+	id, err := runBackup("../../../../tmp/pwned-conn", uri, "")
+	if err != nil {
+		t.Fatalf("runBackup: %v", err)
+	}
+
+	idx, err := store.Load(backupsDir)
+	if err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	bk, ok := idx.Find(id)
+	if !ok {
+		t.Fatal("expected the new backup to be present in the index")
+	}
+	if strings.ContainsAny(bk.FileName, "/\\") {
+		t.Fatalf("expected FileName to contain no path separators, got %q", bk.FileName)
+	}
+	archivePath := filepath.Join(backupsDir, bk.FileName)
+	if _, statErr := os.Stat(archivePath); statErr != nil {
+		t.Fatalf("expected the archive to exist inside backupsDir at %q, got: %v", archivePath, statErr)
+	}
+}
+
+// TestRunBackupRestoreRejectsTraversalFileName is the regression test for
+// #165: runBackupRestore joined a stored FileName back onto backupsDir
+// with a raw filepath.Join, unlike the CLI/desktop restore paths, which
+// both use pathsafety.SafeJoin as a second layer of defense against a
+// pre-fix or hand-corrupted index entry.
+func TestRunBackupRestoreRejectsTraversalFileName(t *testing.T) {
+	t.Setenv("DBHELM_CONFIG_DIR", t.TempDir())
+	backupsDir, err := config.BackupsDir()
+	if err != nil {
+		t.Fatalf("BackupsDir: %v", err)
+	}
+	idx := &store.Index{Backups: []store.Backup{
+		{ID: "evil", Connection: "c", Database: "d", FileName: "../../../../tmp/evil.archive.gz"},
+	}}
+	if err := store.Save(backupsDir, idx); err != nil {
+		t.Fatalf("store.Save: %v", err)
+	}
+
+	err = runBackupRestore("c", "mongodb://unused", "evil")
+	if err == nil {
+		t.Fatal("expected an error for a traversal FileName")
+	}
+	if !strings.Contains(err.Error(), "escapes") {
+		t.Fatalf("expected a path-escape error, got: %v", err)
 	}
 }
