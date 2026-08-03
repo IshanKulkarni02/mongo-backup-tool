@@ -162,7 +162,7 @@ func (m Model) handleConnectionsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dbCursor = 0
 		m.dbErr = ""
 		m.dbTyping = false
-		return m, loadDatabasesCmd(m.connection.URI)
+		return m, loadDatabasesCmd(m.connection)
 	case "esc", "q":
 		m.quitting = true
 		return m, tea.Quit

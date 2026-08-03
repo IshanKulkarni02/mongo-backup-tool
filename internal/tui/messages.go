@@ -12,10 +12,32 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
-	"github.com/IshanKulkarni02/dbhelm/internal/mongotools"
 	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
+
+// connConfigFor builds the engine.ConnConfig shared by openSQLSession and
+// openEngineSession, so the two can't drift out of sync with each other.
+func connConfigFor(conn config.Connection) (engine.ConnConfig, error) {
+	connCfg := engine.ConnConfig{
+		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
+		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
+	}
+	if conn.SSHHost != "" {
+		knownHosts, err := config.SSHKnownHostsPath()
+		if err != nil {
+			return engine.ConnConfig{}, err
+		}
+		connCfg.SSHTunnel = &tunnel.Config{
+			Host:           conn.SSHHost,
+			User:           conn.SSHUser,
+			Password:       conn.SSHPassword,
+			PrivateKeyPEM:  conn.SSHPrivateKey,
+			KnownHostsPath: knownHosts,
+		}
+	}
+	return connCfg, nil
+}
 
 // openSQLSession opens a one-shot engine.SQLSession for a saved connection —
 // the TUI has no long-lived session cache, so callers must invoke the
@@ -25,22 +47,9 @@ func openSQLSession(conn config.Connection) (engine.SQLSession, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	connCfg := engine.ConnConfig{
-		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
-		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
-	}
-	if conn.SSHHost != "" {
-		knownHosts, err := config.SSHKnownHostsPath()
-		if err != nil {
-			return nil, nil, err
-		}
-		connCfg.SSHTunnel = &tunnel.Config{
-			Host:           conn.SSHHost,
-			User:           conn.SSHUser,
-			Password:       conn.SSHPassword,
-			PrivateKeyPEM:  conn.SSHPrivateKey,
-			KnownHostsPath: knownHosts,
-		}
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
 	}
 	sess, err := eng.Open(context.Background(), connCfg)
 	if err != nil {
@@ -52,6 +61,43 @@ func openSQLSession(conn config.Connection) (engine.SQLSession, func(), error) {
 		return nil, nil, fmt.Errorf("connection %q isn't a SQL database", conn.Name)
 	}
 	return ss, func() { ss.Close(context.Background()) }, nil
+}
+
+// openEngineSession opens a one-shot engine.Session for a saved
+// connection, regardless of which surface its engine additionally
+// implements (SQL, documents) — used where only the engine-agnostic
+// Session methods (Ping, ListDatabases) are needed, e.g. browsing a
+// connection's databases. Mirrors cmd/snapshot.go's identically-named
+// helper (duplicated rather than shared for the same import-cycle reason
+// documented on openSQLSession/runBackup elsewhere in this package).
+func openEngineSession(conn config.Connection) (engine.Session, func(), error) {
+	eng, err := engine.Lookup(conn.EngineID())
+	if err != nil {
+		return nil, nil, err
+	}
+	connCfg, err := connConfigFor(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	sess, err := eng.Open(context.Background(), connCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sess, func() { sess.Close(context.Background()) }, nil
+}
+
+// connectionNames picks what to show as the browsable "database" list for
+// an already-pinged sess: an engine.SchemaLister's ListSchemas if the
+// engine implements it (Postgres, whose SQLSession "database" parameter
+// actually means schema within the DSN's fixed database), otherwise the
+// base ListDatabases. Mirrors desktop/connections.go's testConnectionNames
+// — without this, Postgres's real sibling database names would never
+// match a schema and browsing would silently come up empty.
+func connectionNames(ctx context.Context, sess engine.Session) ([]string, error) {
+	if sl, ok := sess.(engine.SchemaLister); ok {
+		return sl.ListSchemas(ctx)
+	}
+	return sess.ListDatabases(ctx)
 }
 
 type depsCheckedMsg struct{ statuses []depmanager.Status }
@@ -172,9 +218,18 @@ func saveConnectionCmd(name, uri, engineID string) tea.Cmd {
 	}
 }
 
-func loadDatabasesCmd(uri string) tea.Cmd {
+func loadDatabasesCmd(conn config.Connection) tea.Cmd {
 	return func() tea.Msg {
-		dbs, err := mongotools.TestConnection(uri)
+		sess, release, err := openEngineSession(conn)
+		if err != nil {
+			return databasesLoadedMsg{err: err}
+		}
+		defer release()
+		ctx := context.Background()
+		if err := sess.Ping(ctx); err != nil {
+			return databasesLoadedMsg{err: err}
+		}
+		dbs, err := connectionNames(ctx, sess)
 		return databasesLoadedMsg{dbs: dbs, err: err}
 	}
 }
