@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 )
 
@@ -25,40 +26,11 @@ func (a *App) ListSnapshots(connection, database string) ([]snapshot.Summary, er
 
 // CreateSnapshot starts a snapshot as a background job and returns its job ID.
 func (a *App) CreateSnapshot(connectionName, database, message string) (string, error) {
-	conn, err := a.resolveConn(connectionName)
-	if err != nil {
+	if _, err := a.resolveConn(connectionName); err != nil {
 		return "", err
-	}
-	eng, err := engine.Lookup(conn.EngineID())
-	if err != nil {
-		return "", err
-	}
-	if eng.Capabilities().SQL {
-		return a.jobs.run("snapshot-create", func() (any, error) {
-			sess, release, err := a.sqlSession(connectionName)
-			if err != nil {
-				return nil, err
-			}
-			defer release()
-			return snapshot.CreateSQL(context.Background(), snapshot.SQLCreateOptions{
-				Connection: connectionName,
-				Database:   database,
-				Message:    message,
-				Session:    sess,
-			})
-		}), nil
 	}
 	return a.jobs.run("snapshot-create", func() (any, error) {
-		res, err := snapshot.Create(snapshot.CreateOptions{
-			Connection: connectionName,
-			URI:        conn.URI,
-			Database:   database,
-			Message:    message,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return res, nil
+		return service.CreateSnapshot(context.Background(), a.engines, connectionName, database, message)
 	}), nil
 }
 
@@ -88,25 +60,12 @@ type DiffSummaryResult struct {
 // Compare never materializes a changed-ID list (diff.go), so this stays
 // bounded in memory even for very large, heavily-changed databases.
 func (a *App) DiffSnapshots(connectionName, database, fromID, toID string) (DiffSummaryResult, error) {
-	from, scope, to, live, err := a.openDiffScope(connectionName, database, fromID, toID)
+	d, err := a.openDiff(connectionName, database, fromID, toID)
 	if err != nil {
 		return DiffSummaryResult{}, err
 	}
-	defer scope.Close()
-
-	// live is non-nil (and to is nil) exactly when toID == "" — the
-	// documented "diff against the live database" path — so live must be
-	// checked before to.ID is ever dereferenced.
-	if live != nil {
-		defer live.Close()
-		diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), live.Manifest, live.Source())
-		if err != nil {
-			return DiffSummaryResult{}, err
-		}
-		return summarizeDiff(diff), nil
-	}
-
-	diff, err := snapshot.Compare(context.Background(), from, scope.Source(from.ID), to, scope.Source(to.ID))
+	defer d.Close()
+	diff, err := d.Compare(context.Background())
 	if err != nil {
 		return DiffSummaryResult{}, err
 	}
@@ -147,23 +106,12 @@ func (a *App) DiffCollectionChanges(connectionName, database, fromID, toID, coll
 		return DiffChangePage{}, fmt.Errorf("unknown change type %q", changeType)
 	}
 
-	from, scope, to, live, err := a.openDiffScope(connectionName, database, fromID, toID)
+	d, err := a.openDiff(connectionName, database, fromID, toID)
 	if err != nil {
 		return DiffChangePage{}, err
 	}
-	defer scope.Close()
-
-	// live is non-nil (and to is nil) exactly when toID == "" — the
-	// documented "diff against the live database" path — so live must be
-	// checked before to.ID is ever dereferenced.
-	var ids []string
-	var total int
-	if live != nil {
-		defer live.Close()
-		ids, total, err = snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), live.Source(), collection, ct, offset, limit)
-	} else {
-		ids, total, err = snapshot.DiffCollectionPage(context.Background(), scope.Source(from.ID), scope.Source(to.ID), collection, ct, offset, limit)
-	}
+	defer d.Close()
+	ids, total, err := d.CollectionPage(context.Background(), collection, ct, offset, limit)
 	if err != nil {
 		return DiffChangePage{}, err
 	}
@@ -173,51 +121,23 @@ func (a *App) DiffCollectionChanges(connectionName, database, fromID, toID, coll
 	return DiffChangePage{IDs: ids, Total: total, Offset: offset}, nil
 }
 
-// openDiffScope resolves the "from" snapshot, an open Scope for the
-// connection+database (holding the backend for "from" and, when toID is
-// non-empty, "to" as well), and either the "to" snapshot's manifest or a
-// live scan (when toID is empty) — exactly one of to/live is non-nil.
-// Callers must defer scope.Close() and, when live is non-nil, defer
-// live.Close() too.
-func (a *App) openDiffScope(connectionName, database, fromID, toID string) (from *snapshot.Manifest, scope *snapshot.Scope, to *snapshot.Manifest, live *snapshot.LiveScan, err error) {
-	from, err = snapshot.Get(connectionName, database, fromID)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	scope, err = snapshot.OpenScope(connectionName, database)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
+// openDiff opens a diff between two snapshots, or a snapshot and the live
+// database when toID is empty (Mongo only: a SQL live diff isn't implemented,
+// so it fails clearly here rather than let ScanLive's mongo.Connect error on
+// the URI scheme mismatch).
+func (a *App) openDiff(connectionName, database, fromID, toID string) (*snapshot.DiffScope, error) {
+	liveURI := ""
 	if toID == "" {
-		conn, cerr := a.resolveConn(connectionName)
-		if cerr != nil {
-			scope.Close()
-			return nil, nil, nil, nil, cerr
-		}
-		// ScanLive only speaks the Mongo wire protocol; comparing a SQL
-		// snapshot against its live database isn't implemented yet, so
-		// fail clearly here rather than let ScanLive's mongo.Connect
-		// error on the URI scheme mismatch.
-		if eng, eerr := engine.Lookup(conn.EngineID()); eerr == nil && eng.Capabilities().SQL {
-			scope.Close()
-			return nil, nil, nil, nil, fmt.Errorf("comparing against the live database isn't supported for SQL connections yet — compare two snapshots instead")
-		}
-		live, err = snapshot.ScanLive(conn.URI, database)
+		conn, err := a.resolveConn(connectionName)
 		if err != nil {
-			scope.Close()
-			return nil, nil, nil, nil, err
+			return nil, err
 		}
-		return from, scope, nil, live, nil
+		if eng, eerr := engine.Lookup(conn.EngineID()); eerr == nil && eng.Capabilities().SQL {
+			return nil, fmt.Errorf("comparing against the live database isn't supported for SQL connections yet — compare two snapshots instead")
+		}
+		liveURI = conn.URI
 	}
-
-	to, err = snapshot.Get(connectionName, database, toID)
-	if err != nil {
-		scope.Close()
-		return nil, nil, nil, nil, err
-	}
-	return from, scope, to, nil, nil
+	return snapshot.OpenDiff(connectionName, database, fromID, toID, liveURI)
 }
 
 func summarizeDiff(diff snapshot.Diff) DiffSummaryResult {
@@ -243,61 +163,19 @@ func summarizeDiff(diff snapshot.Diff) DiffSummaryResult {
 }
 
 // RestoreSnapshot starts an in-place, safety-snapshotted restore as a
-// background job.
+// background job. The restore's error message already says whether it
+// auto-rolled back, so it is returned straight through.
 func (a *App) RestoreSnapshot(connectionName, database, snapshotID string) (string, error) {
-	conn, err := a.resolveConn(connectionName)
-	if err != nil {
+	if _, err := a.resolveConn(connectionName); err != nil {
 		return "", err
-	}
-	eng, err := engine.Lookup(conn.EngineID())
-	if err != nil {
-		return "", err
-	}
-	if eng.Capabilities().SQL {
-		return a.jobs.run("snapshot-restore", func() (any, error) {
-			sess, release, err := a.sqlSession(connectionName)
-			if err != nil {
-				return nil, err
-			}
-			defer release()
-			// RestoreSQLWithSafety's error message already says whether it
-			// auto-rolled back, so it's returned straight through below.
-			result, safety, _, err := snapshot.RestoreSQLWithSafety(context.Background(), snapshot.SQLRestoreOptions{
-				SourceConnection: connectionName,
-				SourceDatabase:   database,
-				SnapshotID:       snapshotID,
-				Session:          sess,
-				EngineID:         conn.EngineID(),
-				Drop:             true,
-			}, connectionName)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"result": result, "safetySnapshotId": safetyID(safety)}, nil
-		}), nil
 	}
 	return a.jobs.run("snapshot-restore", func() (any, error) {
-		// RestoreWithSafety's error message already says whether it
-		// auto-rolled back, so it's returned straight through below.
-		result, safety, _, err := snapshot.RestoreWithSafety(snapshot.RestoreOptions{
-			SourceConnection: connectionName,
-			SourceDatabase:   database,
-			SnapshotID:       snapshotID,
-			TargetURI:        conn.URI,
-			Drop:             true,
-		}, connectionName)
+		out, err := service.RestoreSnapshot(context.Background(), a.engines, connectionName, database, snapshotID)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"result": result, "safetySnapshotId": safetyID(safety)}, nil
+		return map[string]any{"result": out.Result, "safetySnapshotId": out.SafetySnapshotID}, nil
 	}), nil
-}
-
-func safetyID(res *snapshot.CreateResult) string {
-	if res == nil {
-		return ""
-	}
-	return res.Summary.ID
 }
 
 // TagSnapshot labels a snapshot, protecting it from gc.

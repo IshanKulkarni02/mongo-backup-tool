@@ -10,34 +10,11 @@ import (
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/depmanager"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
-	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 	"github.com/IshanKulkarni02/dbhelm/internal/humansize"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 	"github.com/IshanKulkarni02/dbhelm/internal/snapshot"
 	"github.com/IshanKulkarni02/dbhelm/internal/store"
 )
-
-// connConfigFor builds the engine.ConnConfig shared by openSQLSession and
-// openEngineSession, so the two can't drift out of sync with each other.
-func connConfigFor(conn config.Connection) (engine.ConnConfig, error) {
-	connCfg := engine.ConnConfig{
-		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
-		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
-	}
-	if conn.SSHHost != "" {
-		knownHosts, err := config.SSHKnownHostsPath()
-		if err != nil {
-			return engine.ConnConfig{}, err
-		}
-		connCfg.SSHTunnel = &tunnel.Config{
-			Host:           conn.SSHHost,
-			User:           conn.SSHUser,
-			Password:       conn.SSHPassword,
-			PrivateKeyPEM:  conn.SSHPrivateKey,
-			KnownHostsPath: knownHosts,
-		}
-	}
-	return connCfg, nil
-}
 
 // openSQLSession opens a one-shot engine.SQLSession for a saved connection —
 // the TUI has no long-lived session cache, so callers must invoke the
@@ -47,7 +24,7 @@ func openSQLSession(conn config.Connection) (engine.SQLSession, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	connCfg, err := connConfigFor(conn)
+	connCfg, err := service.ConnConfigFor(&conn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,7 +52,7 @@ func openEngineSession(conn config.Connection) (engine.Session, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	connCfg, err := connConfigFor(conn)
+	connCfg, err := service.ConnConfigFor(&conn)
 	if err != nil {
 		return nil, nil, err
 	}

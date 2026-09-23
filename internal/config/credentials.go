@@ -238,11 +238,18 @@ func MigrateCredentials() (int, error) {
 	return migrated, nil
 }
 
-// RedactURI masks a URI's password for safe display.
+// RedactURI masks a URI's password for safe display, and the value of any
+// query parameter whose name says it holds a password or secret (for example
+// ?password=... or ?tlsCertificateKeyFilePassword=...). Other query
+// parameters are left byte-for-byte as they were.
 func RedactURI(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
+	if err != nil {
 		return raw
+	}
+	u.RawQuery = redactQuery(u.RawQuery)
+	if u.User == nil {
+		return u.String()
 	}
 	if _, hasPass := u.User.Password(); hasPass {
 		u.User = url.UserPassword(u.User.Username(), "****")
@@ -263,4 +270,27 @@ func RedactURI(raw string) string {
 		return strings.ReplaceAll(full[:idx], "%2A", "*") + full[idx:]
 	}
 	return full
+}
+
+// redactQuery masks the value of secret-looking parameters in a raw query
+// string, leaving every other byte untouched.
+func redactQuery(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	parts := strings.Split(raw, "&")
+	for i, kv := range parts {
+		key, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if name, err := url.QueryUnescape(key); err == nil {
+			key = name
+		}
+		k := strings.ToLower(key)
+		if strings.Contains(k, "password") || strings.Contains(k, "passwd") || strings.Contains(k, "pwd") || strings.Contains(k, "secret") {
+			parts[i] = kv[:strings.IndexByte(kv, '=')+1] + "****"
+		}
+	}
+	return strings.Join(parts, "&")
 }

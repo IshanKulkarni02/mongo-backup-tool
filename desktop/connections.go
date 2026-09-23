@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 	"github.com/IshanKulkarni02/dbhelm/internal/secrets"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 )
 
 // ConnectionInfo is a saved connection as shown to the frontend — its URI
@@ -83,50 +83,11 @@ type ConnectionInput struct {
 // AddConnection saves a new connection (or replaces one with the same
 // name). input.Engine may be empty for the default (mongodb).
 func (a *App) AddConnection(input ConnectionInput) error {
-	if input.Name == "" || input.URI == "" {
-		return fmt.Errorf("both a name and a URI are required")
-	}
-	engineID := input.Engine
-	if engineID == "" {
-		engineID = "mongodb"
-	}
-	if _, err := engine.Lookup(engineID); err != nil {
-		return err
-	}
-	switch input.Environment {
-	case "", "dev", "staging", "prod":
-	default:
-		return fmt.Errorf("invalid environment %q (use dev, staging, or prod)", input.Environment)
-	}
-	if input.SSHHost != "" && input.SSHPassword == "" && input.SSHPrivateKey == "" {
-		return fmt.Errorf("an SSH tunnel needs a password or private key")
-	}
-	if input.TenantSessionVar != "" && !engine.ValidSessionVarName(input.TenantSessionVar) {
-		return fmt.Errorf("invalid tenant session variable name %q", input.TenantSessionVar)
-	}
-	err := config.Update(func(cfg *config.Config) error {
-		// Preserve any tenant value already set for an existing connection
-		// of the same name — enabling/renaming tenant mode here shouldn't
-		// reset whichever tenant SwitchTenant last selected.
-		tenantValue := ""
-		if existing, ok := cfg.Find(input.Name); ok {
-			tenantValue = existing.TenantValue
-		}
-		cfg.Upsert(config.Connection{
-			Name:             input.Name,
-			URI:              input.URI,
-			Engine:           engineID,
-			Environment:      input.Environment,
-			ReadOnly:         input.ReadOnly,
-			SSHHost:          input.SSHHost,
-			SSHUser:          input.SSHUser,
-			SSHPassword:      input.SSHPassword,
-			SSHPrivateKey:    input.SSHPrivateKey,
-			TenantSessionVar: input.TenantSessionVar,
-			TenantValue:      tenantValue,
-			CreatedAt:        time.Now().Format(time.RFC3339),
-		})
-		return nil
+	err := service.AddConnection(service.ConnectionInput{
+		Name: input.Name, URI: input.URI, Engine: input.Engine, Environment: input.Environment,
+		ReadOnly: input.ReadOnly, SSHHost: input.SSHHost, SSHUser: input.SSHUser,
+		SSHPassword: input.SSHPassword, SSHPrivateKey: input.SSHPrivateKey,
+		TenantSessionVar: input.TenantSessionVar,
 	})
 	if err != nil {
 		return err
@@ -151,16 +112,7 @@ func (a *App) PickSQLiteFile() (string, error) {
 // RemoveConnection deletes a saved connection, its cached session, and its
 // keychain entry.
 func (a *App) RemoveConnection(name string) error {
-	err := config.Update(func(cfg *config.Config) error {
-		if conn, ok := cfg.Find(name); ok {
-			config.DeleteCredential(*conn)
-		}
-		if !cfg.Remove(name) {
-			return fmt.Errorf("no connection named %q", name)
-		}
-		return nil
-	})
-	if err != nil {
+	if err := service.RemoveConnection(name); err != nil {
 		return err
 	}
 	a.engines.Invalidate(name)
@@ -214,16 +166,10 @@ func (a *App) TestConnection(name string) ([]string, error) {
 	return testConnectionNames(context.Background(), sess)
 }
 
-// testConnectionNames picks what TestConnection returns for an
-// already-pinged sess: an engine.SchemaLister's ListSchemas if the engine
-// implements it, otherwise the base ListDatabases. Split out from
-// TestConnection so the dispatch itself is testable against a fake Session
-// without a live database connection.
+// testConnectionNames is service.DatabaseNames, kept as a local name for the
+// desktop's callers and tests.
 func testConnectionNames(ctx context.Context, sess engine.Session) ([]string, error) {
-	if sl, ok := sess.(engine.SchemaLister); ok {
-		return sl.ListSchemas(ctx)
-	}
-	return sess.ListDatabases(ctx)
+	return service.DatabaseNames(ctx, sess)
 }
 
 // requireWritable returns engine.ErrReadOnly if the named connection is
@@ -232,21 +178,9 @@ func testConnectionNames(ctx context.Context, sess engine.Session) ([]string, er
 // to a session, so Safe Mode is enforced in Go — independent of whatever
 // the frontend does or doesn't disable.
 func (a *App) requireWritable(name string) error {
-	conn, err := a.resolveConn(name)
-	if err != nil {
-		return err
-	}
-	return engine.RequireWritable(engine.ConnConfig{ReadOnly: conn.ReadOnly})
+	return service.RequireWritable(name)
 }
 
 func (a *App) resolveConn(name string) (*config.Connection, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, err
-	}
-	conn, ok := cfg.Find(name)
-	if !ok {
-		return nil, fmt.Errorf("no connection named %q", name)
-	}
-	return conn, nil
+	return service.ResolveConn(name)
 }

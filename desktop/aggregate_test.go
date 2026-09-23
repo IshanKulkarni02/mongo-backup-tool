@@ -11,6 +11,7 @@ import (
 
 	"github.com/IshanKulkarni02/dbhelm/internal/config"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 	"github.com/IshanKulkarni02/dbhelm/internal/testmongod"
 )
 
@@ -123,8 +124,8 @@ func TestWritesData(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := writesData(c.pipeline); got != c.want {
-				t.Errorf("writesData(%q) = %v, want %v", c.pipeline, got, c.want)
+			if got := service.WritesData(c.pipeline); got != c.want {
+				t.Errorf("service.WritesData(%q) = %v, want %v", c.pipeline, got, c.want)
 			}
 		})
 	}

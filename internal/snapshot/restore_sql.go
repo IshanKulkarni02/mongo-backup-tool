@@ -84,7 +84,10 @@ func RestoreSQL(ctx context.Context, opts SQLRestoreOptions) (*RestoreResult, er
 
 		schema, err := opts.Session.TableSchema(ctx, targetDB, name)
 		if err != nil || len(schema.Columns) == 0 {
-			return result, fmt.Errorf("target table %s doesn't exist or couldn't be introspected — SQL snapshot restore requires the table structure to already exist: %w", name, err)
+			if err == nil {
+				return result, fmt.Errorf("target table %s doesn't exist — SQL snapshot restore requires the table structure to already exist", name)
+			}
+			return result, fmt.Errorf("target table %s couldn't be introspected — SQL snapshot restore requires the table structure to already exist: %w", name, err)
 		}
 		binaryCols := make(map[string]bool, len(schema.Columns))
 		for _, c := range schema.Columns {

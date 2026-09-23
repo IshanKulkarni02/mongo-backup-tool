@@ -9,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
+
+	"github.com/IshanKulkarni02/dbhelm/internal/filelock"
 )
 
 // Connection is a saved database connection profile.
@@ -28,6 +31,11 @@ type Connection struct {
 	Environment string `json:"environment,omitempty"`
 	// ReadOnly marks a connection whose sessions must refuse writes.
 	ReadOnly bool `json:"readOnly,omitempty"`
+	// AgentAccess is what AI agents may do through the DBHelm broker on this
+	// connection: "" or "off" (invisible to agents, the default), "read", or
+	// "write" (reads plus requests to change data, which the user approves).
+	// It never carries a credential; agents only ever see the name.
+	AgentAccess string `json:"agentAccess,omitempty"`
 	// CredentialRef is the secrets-store key holding this connection's
 	// password, when it has been moved out of the URI.
 	CredentialRef string `json:"credentialRef,omitempty"`
@@ -234,9 +242,27 @@ var updateMu sync.Mutex
 // holding a package-level lock for the whole sequence. mutate can return
 // errNoChange to abort without saving (not treated as an error), or any
 // other error to abort the same way but have it propagate to the caller.
+//
+// Besides the in-process lock, a file lock next to config.json serializes
+// Update across processes (the desktop app, the CLI and the agent broker
+// can all be running), so two of them can't each load the same file and
+// then overwrite each other's change.
 func Update(mutate func(*Config) error) error {
 	updateMu.Lock()
 	defer updateMu.Unlock()
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return filelock.With(filepath.Join(dir, "config.lock"), 10*time.Second, time.Minute, "config update", func() error {
+		return updateLocked(mutate)
+	})
+}
+
+func updateLocked(mutate func(*Config) error) error {
 	cfg, err := Load()
 	if err != nil {
 		return err

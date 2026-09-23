@@ -7,6 +7,7 @@ import (
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine/safeguard"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 )
 
 // TestRunSQLQueryBlocksWriteCTEOnReadOnlyConnection guards against #9: a
@@ -101,7 +102,7 @@ func TestCheckQueryStatementSkipsGateForAnalyzeSelect(t *testing.T) {
 		return engine.ErrReadOnly
 	}
 	inner := safeguard.StripExplainAnalyze("ANALYZE SELECT 1")
-	if err := checkQueryStatement(inner, requireWritable); err != nil {
+	if err := service.CheckQueryStatement(inner, requireWritable); err != nil {
 		t.Fatalf("checkQueryStatement: %v", err)
 	}
 	if called {
