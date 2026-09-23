@@ -1,7 +1,6 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/dbhelm-logo-dark.png">
-  <img src="assets/brand/dbhelm-logo-light.png" alt="DBHelm" width="360">
-</picture>
+<p align="center">
+  <img src="assets/brand/dbhelm-logo.png" alt="DBHelm" width="240">
+</p>
 
 A cross-platform tool for backing up, restoring, and version-controlling
 MongoDB databases — local deployments or Atlas clusters. `dbhelm` gives you
@@ -173,6 +172,17 @@ Build and run it locally — see [Desktop app development](#desktop-app-developm
 under [Development](#development). Prebuilt installers are **not
 code-signed**; see [Distribution](#distribution) for what that means on
 first launch.
+
+## Toolkit: VS Code extension and agent skill
+
+DBHelm also ships as a two-part toolkit that lets you and your coding agents share the same databases safely:
+
+- **[VS Code extension](extension/README.md)** — the human side. Connections, snapshots and backups, and the **Bridge**, where requests from agents wait for your approval. **Manual Helm** (default) asks you before anything changes; **Autopilot** lets DBHelm approve ordinary changes for you.
+- **[Agent skill](skill/dbhelm/SKILL.md)** — the agent side. Teaches Claude Code and other agents to use `dbhelm agent`: reads run in a database-enforced read-only transaction with row, size and time limits, and changes are requests only DBHelm can approve. Agents never see a connection string or password.
+
+Agents that speak MCP (Cursor, Codex, Claude Desktop) can use `dbhelm mcp` instead. The extension also has a read-only **Chart** for browsing schema and data.
+
+Both talk to one local broker (`dbhelm serve`), so the extension and the agents always agree on what is allowed. Enable a connection for agents with `dbhelm connection add ... --agent-access read|write` or in the extension.
 
 ## In-tool guide
 
@@ -500,6 +510,12 @@ dbhelm scheduler list
 dbhelm scheduler remove <id>
 dbhelm scheduler run                          Run in the foreground, firing due schedules (Ctrl+C to stop)
 
+dbhelm agent status|connections|databases|schema|describe|query|explain   Agent access (JSON output)
+dbhelm agent write --connection <name> --db <db> --sql "..."              Ask DBHelm to run a change (the user approves)
+dbhelm agent snapshot list|create|restore     Snapshots for agents; restore is a request
+dbhelm mcp                                    Serve DBHelm to MCP clients over stdio
+dbhelm serve [--headless]                     Run the agent broker (the extension starts it for you)
+
 dbhelm doctor                                 Check mongodump/mongorestore are installed
 dbhelm doctor install [--yes]                 Automatically install missing dependencies
 dbhelm guide [topic]                          Show the in-tool usage guide
@@ -528,6 +544,11 @@ The codebase is organized as:
 - `internal/remote/` — Git/Git-LFS wrapper for remote sync
 - `internal/scheduler/` — recurring snapshot/backup jobs (interval-based, no external cron needed)
 - `internal/tui/` — the interactive terminal UI (Bubble Tea)
+- `internal/service/` — connection resolution and safety gates shared by the CLI, TUI, desktop app and broker
+- `internal/guard/` — the read-only boundary for untrusted callers (agents): database-enforced read-only execution, limits, error scrubbing
+- `internal/mcp/` — the MCP adapter (`dbhelm mcp`) over the broker
+- `internal/broker/` — the local agent-access service (`dbhelm serve`): agent and operator doors, approvals, Autopilot, ship's log
+- `extension/` — the VS Code extension; `skill/dbhelm/` — the coding-agent skill
 - `desktop/` — the native desktop app (Wails v2 + React/TypeScript), a separate Go module that imports `internal/*` directly
 
 ### Desktop app development
