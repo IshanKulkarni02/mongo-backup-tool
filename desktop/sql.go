@@ -7,21 +7,13 @@ import (
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 	"github.com/IshanKulkarni02/dbhelm/internal/engine/safeguard"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 )
 
 // sqlSession acquires the cached SQL session for a connection. The caller
 // must invoke the returned release func when done.
 func (a *App) sqlSession(connectionName string) (engine.SQLSession, func(), error) {
-	sess, release, err := a.engines.Acquire(context.Background(), connectionName)
-	if err != nil {
-		return nil, nil, err
-	}
-	ss, ok := sess.(engine.SQLSession)
-	if !ok {
-		release()
-		return nil, nil, fmt.Errorf("connection %q isn't a SQL database", connectionName)
-	}
-	return ss, release, nil
+	return service.SQLSessionFrom(context.Background(), a.engines, connectionName)
 }
 
 // TableInfo is one table's summary, shown in the SQL browser's tree.
@@ -105,34 +97,12 @@ func (a *App) GetTableSchema(connectionName, database, table string) (engine.Tab
 	return sess.TableSchema(context.Background(), database, table)
 }
 
-// checkQueryStatement gates a statement arriving through a "query" RPC
-// (RunSQLQuery/RunSQLQueryJob/ExplainSQL) — paths meant only for reads, but
-// which reach db.QueryContext directly with no requireWritable/Classify
-// check of their own. A writable CTE (e.g. "WITH x AS (DELETE ...) SELECT
-// * FROM x") looks like a read to the frontend's client-side routing but
-// isn't one, so read-only enforcement must not depend on which RPC the
-// frontend happened to route the statement through. Statements that really
-// are reads (per safeguard.IsRead) skip this entirely — a read-only
-// connection must still be able to read.
-func checkQueryStatement(sqlText string, requireWritable func() error) error {
-	if safeguard.IsRead(sqlText) {
-		return nil
-	}
-	if err := requireWritable(); err != nil {
-		return err
-	}
-	if class := safeguard.Classify(sqlText); class.Risk == safeguard.RiskDangerous {
-		return fmt.Errorf("dangerous statement (%s) — run it via Execute instead, with confirmation", class.Reason)
-	}
-	return nil
-}
-
 // RunSQLQuery runs a read query and returns a typed result page. Used by
 // the bounded, fast table-browser path (TableView); the ad-hoc SQL editor
 // uses the cancelable RunSQLQueryJob instead, since arbitrary user SQL can
 // run arbitrarily long.
 func (a *App) RunSQLQuery(connectionName, database, sqlText string) (engine.SQLResult, error) {
-	if err := checkQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
+	if err := service.CheckQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
 		return engine.SQLResult{}, err
 	}
 	sess, release, err := a.sqlSession(connectionName)
@@ -152,7 +122,7 @@ func (a *App) RunSQLQuery(connectionName, database, sqlText string) (engine.SQLR
 // Call CancelJob(id) to abort a long-running query.
 func (a *App) RunSQLQueryJob(connectionName, database, sqlText string) string {
 	return a.jobs.runCancelable("sql-query", func(ctx context.Context) (any, error) {
-		if err := checkQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
+		if err := service.CheckQueryStatement(sqlText, func() error { return a.requireWritable(connectionName) }); err != nil {
 			return nil, err
 		}
 		sess, release, err := a.sqlSession(connectionName)
@@ -208,7 +178,7 @@ func (a *App) RunSQLExecute(connectionName, database, sqlText, confirmDatabaseNa
 // reads as a read (no gating) while "ANALYZE DELETE ..." does not.
 func (a *App) ExplainSQL(connectionName, database, sqlText string) (string, error) {
 	inner := safeguard.StripExplainAnalyze(sqlText)
-	if err := checkQueryStatement(inner, func() error { return a.requireWritable(connectionName) }); err != nil {
+	if err := service.CheckQueryStatement(inner, func() error { return a.requireWritable(connectionName) }); err != nil {
 		return "", err
 	}
 	sess, release, err := a.sqlSession(connectionName)

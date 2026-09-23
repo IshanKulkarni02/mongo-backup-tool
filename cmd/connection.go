@@ -32,6 +32,7 @@ var (
 	connAddEngine           string
 	connAddEnvironment      string
 	connAddReadOnly         bool
+	connAddAgentAccess      string
 	connAddSSHHost          string
 	connAddSSHUser          string
 	connAddSSHPassword      string
@@ -97,9 +98,19 @@ var connectionAddCmd = &cobra.Command{
 		// Preserve any tenant value already set for an existing connection of
 		// the same name — enabling/renaming tenant mode here shouldn't reset
 		// whichever tenant was last selected (see desktop's SwitchTenant).
-		tenantValue := ""
+		tenantValue, agentAccess := "", connAddAgentAccess
 		if existing, ok := cfg.Find(name); ok {
 			tenantValue = existing.TenantValue
+			if agentAccess == "" {
+				agentAccess = existing.AgentAccess // re-adding must not silently change what agents can do
+			}
+		}
+		switch agentAccess {
+		case "", "off":
+			agentAccess = ""
+		case "read", "write":
+		default:
+			return fmt.Errorf("--agent-access must be off, read or write, not %q", agentAccess)
 		}
 		cfg.Upsert(config.Connection{
 			Name:             name,
@@ -107,6 +118,7 @@ var connectionAddCmd = &cobra.Command{
 			Engine:           engineID,
 			Environment:      connAddEnvironment,
 			ReadOnly:         connAddReadOnly,
+			AgentAccess:      agentAccess,
 			SSHHost:          connAddSSHHost,
 			SSHUser:          connAddSSHUser,
 			SSHPassword:      connAddSSHPassword,
@@ -240,6 +252,7 @@ func init() {
 	connectionAddCmd.Flags().StringVar(&connAddEngine, "engine", "", "Database engine: mongodb (default), postgres, mysql, or sqlite")
 	connectionAddCmd.Flags().StringVar(&connAddEnvironment, "environment", "", "Tag the connection: dev, staging, or prod")
 	connectionAddCmd.Flags().BoolVar(&connAddReadOnly, "readonly", false, "Refuse writes on this connection")
+	connectionAddCmd.Flags().StringVar(&connAddAgentAccess, "agent-access", "", "What AI agents may do via the broker: off (default), read, or write (write = requests you approve)")
 	connectionAddCmd.Flags().StringVar(&connAddSSHHost, "ssh-host", "", "SSH tunnel host, if the database isn't directly reachable")
 	connectionAddCmd.Flags().StringVar(&connAddSSHUser, "ssh-user", "", "SSH tunnel username")
 	connectionAddCmd.Flags().StringVar(&connAddSSHPassword, "ssh-password", "", "SSH tunnel password")

@@ -31,3 +31,7 @@ Avoid marketing-dashboard decoration, glassmorphism, gradients, oversized metric
 ## Accessibility & Inclusion
 
 Target WCAG 2.2 AA for the desktop interface. Support full keyboard operation, visible focus, semantic labels and states, non-color-only status communication, reduced motion, text scaling, and high-contrast light and dark themes. Terminal workflows must remain understandable without relying on color alone.
+
+## Brand mark
+
+The logo (`assets/brand/dbhelm-logo.png`, source in `assets/brand/source/`) is a flat ship's wheel around a database cylinder, drawn in `#5B8FBF` on transparent. That blue is the mark's colour only. Product UI keeps the palette above (`#0066FF` accent), and the VS Code extension uses only the editor's own theme tokens, per the toolkit style guide. Regenerate every derived icon with `python3 scripts/brand/make_assets.py`.

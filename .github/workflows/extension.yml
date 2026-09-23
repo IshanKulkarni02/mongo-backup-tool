@@ -1,0 +1,33 @@
+name: Extension
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["extension/**", "skill/**", "internal/**", "cmd/**", ".github/workflows/extension.yml"]
+  pull_request:
+    paths: ["extension/**", "skill/**", "internal/**", "cmd/**", ".github/workflows/extension.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Go tests (broker, guard, service)
+        run: go test ./internal/broker/... ./internal/guard/... ./internal/service/... -count=1
+      - name: Extension
+        working-directory: extension
+        run: |
+          sudo apt-get update && sudo apt-get install -y sqlite3
+          npm ci
+          npm run build:binary
+          npm run compile
+          npm test
+      - name: Package (linux-x64)
+        working-directory: extension
+        run: npx vsce package --target linux-x64

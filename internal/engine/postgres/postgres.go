@@ -103,6 +103,9 @@ type Session struct {
 	defaultSchema string
 }
 
+// defaultReadTimeout bounds a guarded read that names no timeout of its own.
+const defaultReadTimeout = 15 * time.Second
+
 func opCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, 30*time.Second)
 }
@@ -291,6 +294,27 @@ func (s *Session) Query(ctx context.Context, database, sqlText string) (engine.S
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	return sqlbase.RunQuery(ctx, s.db, sqlText)
+}
+
+// QueryReadOnly runs sqlText inside a READ ONLY transaction, so Postgres itself
+// refuses any write regardless of what the statement text looks like, and
+// bounds the query with statement_timeout.
+func (s *Session) QueryReadOnly(ctx context.Context, database, sqlText string, lim engine.ReadLimits) (engine.SQLResult, error) {
+	timeout := lim.Timeout
+	if timeout <= 0 {
+		timeout = defaultReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return engine.SQLResult{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeout.Milliseconds())); err != nil {
+		return engine.SQLResult{}, err
+	}
+	return sqlbase.RunQueryLimited(ctx, tx, sqlText, lim)
 }
 
 func (s *Session) Execute(ctx context.Context, database, sqlText string) (int64, error) {

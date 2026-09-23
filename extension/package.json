@@ -1,0 +1,234 @@
+{
+  "name": "dbhelm",
+  "displayName": "DBHelm",
+  "description": "Snapshots, backups and safe database access for you and your coding agents. You hold the helm: agents ask, DBHelm asks you.",
+  "version": "0.1.0",
+  "publisher": "IshanKulkarni",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IshanKulkarni02/mongo-backup-tool.git",
+    "directory": "extension"
+  },
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "database",
+    "mongodb",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "snapshot",
+    "backup",
+    "ai",
+    "agent",
+    "mcp"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbhelm",
+          "title": "DBHelm",
+          "icon": "media/activitybar-icon-128.png"
+        }
+      ]
+    },
+    "views": {
+      "dbhelm": [
+        {
+          "id": "dbhelmPanel",
+          "name": "Helm",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dbhelm.addConnection",
+        "title": "DBHelm: Add Connection\u2026",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbhelm.openInEditor",
+        "title": "DBHelm: Open Connections and Agent Access",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "dbhelm.takeSnapshot",
+        "title": "DBHelm: Take Snapshot\u2026",
+        "icon": "$(device-camera)"
+      },
+      {
+        "command": "dbhelm.restoreSnapshot",
+        "title": "DBHelm: Restore Snapshot\u2026",
+        "icon": "$(history)"
+      },
+      {
+        "command": "dbhelm.backup",
+        "title": "DBHelm: Back Up Database\u2026",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "dbhelm.restoreBackup",
+        "title": "DBHelm: Restore Backup\u2026"
+      },
+      {
+        "command": "dbhelm.toggleAutopilot",
+        "title": "DBHelm: Toggle Autopilot",
+        "icon": "$(compass)"
+      },
+      {
+        "command": "dbhelm.openLog",
+        "title": "DBHelm: Open Ship's Log",
+        "icon": "$(book)"
+      },
+      {
+        "command": "dbhelm.setupAgentSkill",
+        "title": "DBHelm: Set Up Agent Skill\u2026",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "dbhelm.restartBroker",
+        "title": "DBHelm: Restart Broker"
+      },
+      {
+        "command": "dbhelm.configureAppLock",
+        "title": "DBHelm: App Lock Settings\u2026",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "dbhelm.lockNow",
+        "title": "DBHelm: Lock Now"
+      },
+      {
+        "command": "dbhelm.openHelp",
+        "title": "DBHelm: Open Help",
+        "icon": "$(question)"
+      },
+      {
+        "command": "dbhelm.openStatus",
+        "title": "DBHelm: Show Helm"
+      },
+      {
+        "command": "dbhelm.copyMcpConfig",
+        "title": "DBHelm: Copy MCP Config",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "dbhelm.addMcpToProject",
+        "title": "DBHelm: Add MCP Server to Project\u2026"
+      },
+      {
+        "command": "dbhelm.openChart",
+        "title": "DBHelm: Open Chart (Schema and Data)",
+        "icon": "$(table)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbhelm.openInEditor",
+          "when": "view == dbhelmPanel",
+          "group": "navigation@0"
+        },
+        {
+          "command": "dbhelm.openChart",
+          "when": "view == dbhelmPanel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dbhelm.openLog",
+          "when": "view == dbhelmPanel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dbhelm.openHelp",
+          "when": "view == dbhelmPanel",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dbhelm.configureAppLock",
+          "when": "view == dbhelmPanel",
+          "group": "navigation@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DBHelm",
+      "properties": {
+        "dbhelm.binaryPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `dbhelm` binary. Leave empty to use the one bundled with this extension."
+        },
+        "dbhelm.safetySnapshot": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Take a snapshot of the database before running an approved agent change, so it can be undone. Turn off only for very large databases where the snapshot takes too long."
+        },
+        "dbhelm.autopilotAllowDangerous": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let Autopilot also approve dangerous changes (`DROP`, `TRUNCATE`, `ALTER`, `DELETE`/`UPDATE` with no `WHERE`, snapshot restores). Off: those still wait for you."
+        },
+        "dbhelm.autopilotMinutes": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "Switch Autopilot off after this many minutes. `0` keeps it on until you turn it off or close VS Code."
+        },
+        "dbhelm.requireAuth": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ask for Touch ID / Windows Hello / the app password before approving changes, restoring data, switching Autopilot on, or changing saved logins."
+        },
+        "dbhelm.authMethod": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "password"
+          ],
+          "enumDescriptions": [
+            "Touch ID or Windows Hello when available, app password as fallback",
+            "App password only"
+          ],
+          "default": "auto"
+        },
+        "dbhelm.authTimeoutMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "markdownDescription": "Ask again after this many minutes. `0` asks every time."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./ && node scripts/check-webview.js",
+    "watch": "tsc -watch -p ./",
+    "build:binary": "node scripts/build-binary.js",
+    "prepackage": "node scripts/prepare-package.js",
+    "package": "npm run compile && vsce package",
+    "test": "node --test test/host.test.js test/chart.test.js",
+    "package:all": "node scripts/package-all.js"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.46-24"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}

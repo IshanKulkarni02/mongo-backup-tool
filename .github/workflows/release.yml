@@ -58,6 +58,12 @@ jobs:
           - goos: linux
             goarch: amd64
             name: dbhelm-linux-amd64
+          - goos: linux
+            goarch: arm64
+            name: dbhelm-linux-arm64
+          - goos: windows
+            goarch: arm64
+            name: dbhelm-windows-arm64.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -70,7 +76,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -o "dist/${{ matrix.name }}" .
+        run: go build -trimpath -ldflags "-s -w -X github.com/IshanKulkarni02/dbhelm/cmd.version=${{ github.ref_name }}" -o "dist/${{ matrix.name }}" .
 
       - uses: actions/upload-artifact@v4
         with:
@@ -153,9 +159,38 @@ jobs:
           name: dbhelm-desktop-linux-amd64
           path: desktop/build/bin/dbhelm
 
+  extension:
+    name: VS Code extension (all platforms)
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Package one VSIX per platform
+        # Each VSIX carries only its own platform's dbhelm binary. Publishing to
+        # the Marketplace is a separate, deliberate step (needs the publisher's
+        # token); like the CLI and desktop builds, this only produces artifacts.
+        working-directory: extension
+        run: |
+          npm ci
+          node scripts/package-all.js
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbhelm-vscode-extension
+          path: extension/dist/*.vsix
+
   release:
     name: Create draft GitHub Release
-    needs: [cli, desktop]
+    needs: [cli, desktop, extension]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

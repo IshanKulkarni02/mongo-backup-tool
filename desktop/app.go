@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -14,8 +13,8 @@ import (
 	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/mysql"
 	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/postgres"
 	_ "github.com/IshanKulkarni02/dbhelm/internal/engine/sqlite"
-	"github.com/IshanKulkarni02/dbhelm/internal/engine/tunnel"
 	"github.com/IshanKulkarni02/dbhelm/internal/listener"
+	"github.com/IshanKulkarni02/dbhelm/internal/service"
 )
 
 // App is the single facade bound to the frontend. Every exported method
@@ -32,43 +31,8 @@ type App struct {
 
 func NewApp() *App {
 	a := &App{jobs: newJobManager()}
-	a.engines = engine.NewManager(resolveEngineConn)
+	a.engines = engine.NewManager(service.ResolveEngineConn)
 	return a
-}
-
-// resolveEngineConn maps a saved connection name to its engine and config
-// for the session manager.
-func resolveEngineConn(name string) (engine.ConnConfig, engine.Engine, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return engine.ConnConfig{}, nil, err
-	}
-	conn, ok := cfg.Find(name)
-	if !ok {
-		return engine.ConnConfig{}, nil, fmt.Errorf("no connection named %q", name)
-	}
-	eng, err := engine.Lookup(conn.EngineID())
-	if err != nil {
-		return engine.ConnConfig{}, nil, err
-	}
-	connCfg := engine.ConnConfig{
-		Name: conn.Name, URI: conn.URI, ReadOnly: conn.ReadOnly,
-		TenantSessionVar: conn.TenantSessionVar, TenantValue: conn.TenantValue,
-	}
-	if conn.SSHHost != "" {
-		knownHosts, err := config.SSHKnownHostsPath()
-		if err != nil {
-			return engine.ConnConfig{}, nil, err
-		}
-		connCfg.SSHTunnel = &tunnel.Config{
-			Host:           conn.SSHHost,
-			User:           conn.SSHUser,
-			Password:       conn.SSHPassword,
-			PrivateKeyPEM:  conn.SSHPrivateKey,
-			KnownHostsPath: knownHosts,
-		}
-	}
-	return connCfg, eng, nil
 }
 
 func (a *App) startup(ctx context.Context) {

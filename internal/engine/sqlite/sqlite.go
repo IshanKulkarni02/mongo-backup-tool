@@ -72,6 +72,9 @@ type Session struct {
 	path string
 }
 
+// defaultReadTimeout bounds a guarded read that names no timeout of its own.
+const defaultReadTimeout = 15 * time.Second
+
 func opCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, 30*time.Second)
 }
@@ -214,6 +217,32 @@ func (s *Session) Query(ctx context.Context, database, sqlText string) (engine.S
 	ctx, cancel := opCtx(ctx)
 	defer cancel()
 	return sqlbase.RunQuery(ctx, s.db, sqlText)
+}
+
+// QueryReadOnly runs sqlText with PRAGMA query_only on, so SQLite itself
+// refuses any write, on the pool's single pinned connection (query_only is
+// switched back off before the connection is released).
+func (s *Session) QueryReadOnly(ctx context.Context, database, sqlText string, lim engine.ReadLimits) (engine.SQLResult, error) {
+	timeout := lim.Timeout
+	if timeout <= 0 {
+		timeout = defaultReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return engine.SQLResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		return engine.SQLResult{}, err
+	}
+	defer func() {
+		resetCtx, resetCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer resetCancel()
+		conn.ExecContext(resetCtx, "PRAGMA query_only = OFF")
+	}()
+	return sqlbase.RunQueryLimited(ctx, conn, sqlText, lim)
 }
 
 func (s *Session) Execute(ctx context.Context, database, sqlText string) (int64, error) {
