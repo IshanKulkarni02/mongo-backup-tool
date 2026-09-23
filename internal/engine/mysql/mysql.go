@@ -8,6 +8,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"net"
 	"sort"
@@ -123,6 +124,9 @@ type Session struct {
 	tunnel    *tunnel.Tunnel
 	tunnelNet string
 }
+
+// defaultReadTimeout bounds a guarded read that names no timeout of its own.
+const defaultReadTimeout = 15 * time.Second
 
 func opCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, 30*time.Second)
@@ -285,6 +289,45 @@ func (s *Session) Query(ctx context.Context, database, sqlText string) (engine.S
 		return err
 	})
 	return result, err
+}
+
+// QueryReadOnly runs sqlText on a pinned connection whose session is set to
+// READ ONLY, so MySQL itself refuses any write — including DDL, which a
+// per-transaction READ ONLY would not stop (DDL implicitly commits first) —
+// and bounds the query with max_execution_time. Both settings are reset
+// before the connection returns to the pool; if that reset fails the
+// connection is discarded rather than pooled in a read-only state.
+func (s *Session) QueryReadOnly(ctx context.Context, database, sqlText string, lim engine.ReadLimits) (engine.SQLResult, error) {
+	timeout := lim.Timeout
+	if timeout <= 0 {
+		timeout = defaultReadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return engine.SQLResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "USE "+quoteIdent(database)); err != nil {
+		return engine.SQLResult{}, fmt.Errorf("selecting database %s: %w", quoteIdent(database), err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET SESSION TRANSACTION READ ONLY"); err != nil {
+		return engine.SQLResult{}, err
+	}
+	defer func() {
+		resetCtx, resetCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer resetCancel()
+		_, e1 := conn.ExecContext(resetCtx, "SET SESSION TRANSACTION READ WRITE")
+		_, e2 := conn.ExecContext(resetCtx, "SET SESSION max_execution_time = 0")
+		if e1 != nil || e2 != nil {
+			conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION max_execution_time = %d", timeout.Milliseconds())); err != nil {
+		return engine.SQLResult{}, err
+	}
+	return sqlbase.RunQueryLimited(ctx, conn, sqlText, lim)
 }
 
 func (s *Session) Execute(ctx context.Context, database, sqlText string) (int64, error) {

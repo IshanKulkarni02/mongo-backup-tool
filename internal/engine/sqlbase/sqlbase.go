@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/IshanKulkarni02/dbhelm/internal/engine"
 )
@@ -37,6 +38,18 @@ type QueryExecer interface {
 // so a full result (== cap) doesn't necessarily mean there were exactly
 // that many rows.
 func RunQuery(ctx context.Context, db QueryExecer, sqlText string) (engine.SQLResult, error) {
+	return RunQueryLimited(ctx, db, sqlText, engine.ReadLimits{})
+}
+
+// RunQueryLimited is RunQuery with caller-supplied bounds. MaxRows defaults
+// to QueryRowCap; MaxCellBytes of 0 means cells are returned whole. When the
+// result has more rows than MaxRows the extra are dropped and the result is
+// marked Truncated, so the cap is never silent.
+func RunQueryLimited(ctx context.Context, db QueryExecer, sqlText string, lim engine.ReadLimits) (engine.SQLResult, error) {
+	maxRows := lim.MaxRows
+	if maxRows <= 0 {
+		maxRows = QueryRowCap
+	}
 	rows, err := db.QueryContext(ctx, sqlText)
 	if err != nil {
 		return engine.SQLResult{}, err
@@ -60,7 +73,11 @@ func RunQuery(ctx context.Context, db QueryExecer, sqlText string) (engine.SQLRe
 	// what it thinks each column is via ColumnTypes and refine from there.
 	colTypes, _ := rows.ColumnTypes()
 
-	for rows.Next() && len(result.Rows) < QueryRowCap {
+	for rows.Next() {
+		if len(result.Rows) >= maxRows {
+			result.Truncated = true
+			break
+		}
 		for i := range scanBuf {
 			scanBuf[i] = nil
 		}
@@ -73,7 +90,7 @@ func RunQuery(ctx context.Context, db QueryExecer, sqlText string) (engine.SQLRe
 			if colTypes != nil && i < len(colTypes) {
 				dbType = colTypes[i].DatabaseTypeName()
 			}
-			row[col] = cellFromRaw(scanBuf[i], dbType)
+			row[col] = capCell(cellFromRaw(scanBuf[i], dbType), lim.MaxCellBytes)
 		}
 		result.Rows = append(result.Rows, row)
 	}
@@ -222,6 +239,21 @@ func RunExec(ctx context.Context, db QueryExecer, sqlText string) (int64, error)
 		return 0, nil
 	}
 	return n, nil
+}
+
+// capCell shortens an oversized cell's Display to max bytes and drops Raw
+// (which would carry the full value), flagging the cut in the text.
+func capCell(c engine.Cell, max int) engine.Cell {
+	if max <= 0 || len(c.Display) <= max {
+		return c
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(c.Display[cut]) { // don't split a multi-byte rune
+		cut--
+	}
+	c.Display = fmt.Sprintf("%s… [cell truncated: %d bytes]", c.Display[:cut], len(c.Display))
+	c.Raw = nil
+	return c
 }
 
 func cellFromRaw(raw sql.RawBytes, dbType string) engine.Cell {

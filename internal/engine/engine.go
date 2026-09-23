@@ -145,3 +145,13 @@ type ConsistentReadTx interface {
 	StreamRows(ctx context.Context, database, table string, onRow func(row map[string]any) error) error
 	Close(ctx context.Context) error
 }
+
+// ReadOnlySQLSession is implemented by SQL engines that can run a query
+// inside a transaction the database itself enforces as read-only (Postgres
+// READ ONLY, MySQL READ ONLY, SQLite query_only). It is the boundary an
+// untrusted caller such as an AI agent is routed through: the text-based
+// safeguard classifier is only a pre-filter, and this is what actually
+// prevents a write that slips past it.
+type ReadOnlySQLSession interface {
+	QueryReadOnly(ctx context.Context, database, sqlText string, lim ReadLimits) (SQLResult, error)
+}

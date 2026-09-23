@@ -1,5 +1,7 @@
 package engine
 
+import "time"
+
 // NamespaceInfo is one collection's (or table's) summary, shown in browser
 // trees.
 type NamespaceInfo struct {
@@ -112,4 +114,15 @@ type SQLResult struct {
 	// Total is the row count of this result set, or -1 when unknown
 	// (arbitrary ad-hoc SQL isn't re-counted with a second query).
 	Total int64 `json:"total"`
+	// Truncated reports that more rows existed than the row cap allowed, so
+	// the caller knows a full page does not mean the whole result.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// ReadLimits bounds one guarded read (see ReadOnlySQLSession). A zero field
+// means "use the engine default".
+type ReadLimits struct {
+	MaxRows      int           // rows returned before the result is marked Truncated
+	MaxCellBytes int           // longest cell Display kept; longer values are cut and flagged
+	Timeout      time.Duration // wall-clock limit for the whole query
 }
